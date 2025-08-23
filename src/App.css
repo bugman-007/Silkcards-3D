@@ -1,0 +1,60 @@
+/* src/App.css - Replace the entire content with this */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.App {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
+}
+
+.app-header {
+  text-align: center;
+  color: white;
+  margin-bottom: 40px;
+}
+
+.app-header h1 {
+  font-size: 2.5rem;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.app-header p {
+  font-size: 1.2rem;
+  opacity: 0.9;
+}
+
+.main-content {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.upload-area {
+  background: white;
+  border-radius: 12px;
+  padding: 40px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  text-align: center;
+}
+
+.upload-result {
+  margin-top: 30px;
+  padding: 20px;
+  background: #e8f5e8;
+  border-radius: 8px;
+  border: 1px solid #c3e6c3;
+}
+
+.upload-result h3 {
+  color: #2d5f2d;
+  margin-bottom: 10px;
+}
+
+.upload-result p {
+  color: #4a7a4a;
+  font-weight: 600;
+}

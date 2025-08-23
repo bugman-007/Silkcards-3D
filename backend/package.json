@@ -1,0 +1,25 @@
+{
+  "name": "silkcards-3d-backend",
+  "version": "1.0.0",
+  "description": "Backend for SilkCards 3D preview tool",
+  "main": "src/app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^1.4.5",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "sharp": "^0.32.6",
+    "canvas": "^2.11.2",
+    "fabric": "^5.3.0",
+    "uuid": "^9.0.1",
+    "fs-extra": "^11.1.1"
+  }
+}
