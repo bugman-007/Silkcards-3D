@@ -6,8 +6,10 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
   globalIgnores(['dist']),
+
+  // ✅ Frontend (React, browser)
   {
-    files: ['**/*.{js,jsx}'],
+    files: ['frontend/**/*.{js,jsx}'],
     extends: [
       js.configs.recommended,
       reactHooks.configs['recommended-latest'],
@@ -24,6 +26,24 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+
+  // ✅ Backend (Node.js, Express)
+  {
+    files: ['backend/**/*.js'],
+    extends: [
+      js.configs.recommended,
+    ],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      globals: globals.node, // 👈 enables process, __dirname, etc.
+      parserOptions: {
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      // add backend-specific overrides if needed
     },
   },
 ])

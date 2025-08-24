@@ -1,4 +1,4 @@
-// src/routes/upload.js - Updated with ES6 modules
+// backend/src/routes/upload.js - CORRECTED VERSION
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
@@ -15,7 +15,8 @@ const router = express.Router();
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadPath = path.join(__dirname, '../uploads');
+    // Fix: Go up two levels from routes to get to src, then to uploads
+    const uploadPath = path.join(__dirname, '../../uploads');
     fs.ensureDirSync(uploadPath);
     cb(null, uploadPath);
   },
@@ -31,7 +32,7 @@ const fileFilter = (req, file, cb) => {
   const allowedTypes = ['.ai', '.pdf'];
   const fileExtension = path.extname(file.originalname).toLowerCase();
   
-  if (allowedTypes.includes(fileExtension)) {
+  if (allowedTypes.includes(fileExtension) || file.mimetype === 'application/pdf') {
     cb(null, true);
   } else {
     cb(new Error('Invalid file type. Only .ai and .pdf files are allowed.'), false);
@@ -84,7 +85,7 @@ router.post('/', upload.single('file'), async (req, res) => {
 router.get('/:fileId', async (req, res) => {
   try {
     const { fileId } = req.params;
-    const uploadsPath = path.join(__dirname, '../uploads');
+    const uploadsPath = path.join(__dirname, '../../uploads');
     
     // Find file with this ID (could be .ai or .pdf)
     const files = await fs.readdir(uploadsPath);

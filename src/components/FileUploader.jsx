@@ -1,11 +1,13 @@
-// src/components/FileUploader.jsx - Create this new file
+// src/components/FileUploader.jsx - UPDATED VERSION
 import { useState, useRef } from 'react';
+import { uploadFile, parseFile } from '../api/client';
 import './FileUploader.css';
 
 export default function FileUploader({ onFileUpload }) {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState(''); // 'uploading', 'success', 'error'
+  const [uploadStatus, setUploadStatus] = useState(''); // 'uploading', 'parsing', 'success', 'error'
+  const [errorMessage, setErrorMessage] = useState('');
   const fileInputRef = useRef(null);
 
   // Handle drag events
@@ -32,9 +34,9 @@ export default function FileUploader({ onFileUpload }) {
   // Handle file selection
   const handleFileSelect = (file) => {
     // Validate file type
-    const validTypes = ['.ai', 'application/pdf', 'application/postscript'];
+    const validTypes = ['.ai', '.pdf'];
     const isValidType = validTypes.some(type => 
-      file.type === type || file.name.toLowerCase().endsWith('.ai')
+      file.name.toLowerCase().endsWith(type) || file.type === 'application/pdf'
     );
 
     if (!isValidType) {
@@ -50,6 +52,7 @@ export default function FileUploader({ onFileUpload }) {
 
     setSelectedFile(file);
     setUploadStatus('');
+    setErrorMessage('');
   };
 
   // Handle file input change
@@ -64,21 +67,33 @@ export default function FileUploader({ onFileUpload }) {
     if (!selectedFile) return;
 
     setUploadStatus('uploading');
+    setErrorMessage('');
     
     try {
-      // Simulate upload for now - we'll connect to backend later
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Upload file to backend
+      const uploadResult = await uploadFile(selectedFile);
+      console.log('Upload successful:', uploadResult);
+      
+      // Start parsing
+      setUploadStatus('parsing');
+      const parseResult = await parseFile(uploadResult.data.fileId);
+      console.log('Parse successful:', parseResult);
       
       setUploadStatus('success');
       
-      // Call parent component callback
+      // Call parent component callback with full results
       if (onFileUpload) {
-        onFileUpload(selectedFile);
+        onFileUpload({
+          file: selectedFile,
+          uploadResult,
+          parseResult
+        });
       }
       
     } catch (error) {
-      console.error('Upload failed:', error);
+      console.error('Upload/Parse failed:', error);
       setUploadStatus('error');
+      setErrorMessage(error.message || 'Upload failed');
     }
   };
 
@@ -86,6 +101,7 @@ export default function FileUploader({ onFileUpload }) {
   const handleReset = () => {
     setSelectedFile(null);
     setUploadStatus('');
+    setErrorMessage('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -143,14 +159,21 @@ export default function FileUploader({ onFileUpload }) {
           {uploadStatus === 'uploading' && (
             <div className="upload-progress">
               <div className="spinner"></div>
-              <p>Uploading and processing...</p>
+              <p>Uploading file...</p>
+            </div>
+          )}
+          
+          {uploadStatus === 'parsing' && (
+            <div className="upload-progress">
+              <div className="spinner"></div>
+              <p>Analyzing file and detecting effects...</p>
             </div>
           )}
           
           {uploadStatus === 'success' && (
             <div className="upload-success">
               <div className="success-icon">✅</div>
-              <p>File uploaded successfully!</p>
+              <p>File uploaded and analyzed successfully!</p>
               <button className="reset-btn" onClick={handleReset}>
                 Upload Another File
               </button>
@@ -160,7 +183,7 @@ export default function FileUploader({ onFileUpload }) {
           {uploadStatus === 'error' && (
             <div className="upload-error">
               <div className="error-icon">❌</div>
-              <p>Upload failed. Please try again.</p>
+              <p>{errorMessage}</p>
               <button className="retry-btn" onClick={handleUpload}>
                 Retry
               </button>

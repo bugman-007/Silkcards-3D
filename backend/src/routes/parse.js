@@ -1,4 +1,4 @@
-// src/routes/parse.js - Updated with ES6 modules
+// backend/src/routes/parse.js - CORRECTED VERSION
 import express from 'express';
 import path from 'path';
 import fs from 'fs-extra';
@@ -19,8 +19,8 @@ router.post('/:fileId', async (req, res) => {
     
     console.log('🔄 Starting parse for file:', fileId);
     
-    // Find the file
-    const uploadsPath = path.join(__dirname, '../uploads');
+    // Fix: Correct path to uploads directory
+    const uploadsPath = path.join(__dirname, '../../uploads');
     const files = await fs.readdir(uploadsPath);
     const matchingFile = files.find(file => 
       path.parse(file).name === fileId
@@ -65,7 +65,7 @@ router.post('/:fileId', async (req, res) => {
 router.get('/:fileId', async (req, res) => {
   try {
     const { fileId } = req.params;
-    const uploadsPath = path.join(__dirname, '../uploads');
+    const uploadsPath = path.join(__dirname, '../../uploads');
     const resultPath = path.join(uploadsPath, `${fileId}_parsed.json`);
     
     if (await fs.pathExists(resultPath)) {
@@ -96,7 +96,7 @@ router.get('/:fileId', async (req, res) => {
 router.get('/:fileId/status', async (req, res) => {
   try {
     const { fileId } = req.params;
-    const uploadsPath = path.join(__dirname, '../uploads');
+    const uploadsPath = path.join(__dirname, '../../uploads');
     
     // Check if original file exists
     const files = await fs.readdir(uploadsPath);

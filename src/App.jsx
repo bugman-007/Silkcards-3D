@@ -1,14 +1,14 @@
-// src/App.jsx - Replace the entire content with this
+// src/App.jsx - UPDATED VERSION
 import { useState } from 'react'
 import './App.css'
 import FileUploader from './components/FileUploader'
 
 function App() {
-  const [uploadedFile, setUploadedFile] = useState(null);
+  const [uploadedData, setUploadedData] = useState(null);
 
-  const handleFileUpload = (file) => {
-    console.log('File uploaded:', file.name);
-    setUploadedFile(file);
+  const handleFileUpload = (data) => {
+    console.log('File processing completed:', data);
+    setUploadedData(data);
   };
 
   return (
@@ -22,10 +22,23 @@ function App() {
         <div className="upload-area">
           <FileUploader onFileUpload={handleFileUpload} />
           
-          {uploadedFile && (
+          {uploadedData && (
             <div className="upload-result">
-              <h3>File ready for processing:</h3>
-              <p>{uploadedFile.name}</p>
+              <h3>Analysis Complete!</h3>
+              <div className="result-details">
+                <p><strong>File:</strong> {uploadedData.file.name}</p>
+                <p><strong>Layers found:</strong> {uploadedData.parseResult.layers.length}</p>
+                <p><strong>Effects detected:</strong></p>
+                <ul>
+                  {Object.entries(uploadedData.parseResult.effects).map(([effect, items]) => (
+                    items.length > 0 && (
+                      <li key={effect}>
+                        {effect}: {items.length} instances
+                      </li>
+                    )
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
         </div>
