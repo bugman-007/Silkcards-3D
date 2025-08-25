@@ -108,7 +108,7 @@ export const uploadFile = async (file) => {
 export const parseFile = async (fileId) => {
   try {
     console.log('🔍 Parsing file:', fileId);
-    const response = await apiClient.post(`/parse/${fileId}`);
+    const response = await apiClient.post(`/api/parse/${fileId}`);
     console.log('✅ Parse successful:', response.data);
     return response.data;
   } catch (error) {
