@@ -1,0 +1,186 @@
+/* src/components/ThreeViewer.css - NEW FILE */
+.three-viewer-container {
+  position: relative;
+  width: 100%;
+  height: 600px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.three-canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.three-viewer-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 400px;
+  background: #f8f9fa;
+  border: 2px dashed #dee2e6;
+  border-radius: 12px;
+  color: #6c757d;
+  font-size: 1.2rem;
+}
+
+/* Controls Panel */
+.viewer-controls {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  display: flex;
+  gap: 10px;
+  z-index: 100;
+}
+
+.control-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.control-btn:hover {
+  background: rgba(255, 255, 255, 1);
+  transform: scale(1.1);
+}
+
+.control-btn.active {
+  background: rgba(102, 126, 234, 0.9);
+  color: white;
+}
+
+.show-controls-btn {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  font-size: 1.2rem;
+  z-index: 100;
+}
+
+/* Info Panel */
+.card-info {
+  position: absolute;
+  bottom: 15px;
+  left: 15px;
+  right: 15px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.card-info h4 {
+  margin: 0 0 8px 0;
+  color: #333;
+  font-size: 1.1rem;
+}
+
+.info-stats {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 10px;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.effects-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.effect-item {
+  display: inline-block;
+}
+
+.effect-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: white;
+}
+
+.effect-badge.foil {
+  background: linear-gradient(45deg, #ffd700, #ffed4e);
+  color: #333;
+}
+
+.effect-badge.spotUV {
+  background: linear-gradient(45deg, #667eea, #764ba2);
+}
+
+.effect-badge.emboss {
+  background: linear-gradient(45deg, #8e9eab, #eef2f3);
+  color: #333;
+}
+
+.effect-badge.diecut {
+  background: linear-gradient(45deg, #ff6b6b, #ee5a52);
+}
+
+.effect-badge.edge {
+  background: linear-gradient(45deg, #4ecdc4, #44a08d);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .three-viewer-container {
+    height: 400px;
+  }
+  
+  .card-info {
+    position: static;
+    margin-top: 15px;
+    border-radius: 8px;
+  }
+  
+  .viewer-controls {
+    top: 10px;
+    right: 10px;
+  }
+  
+  .info-stats {
+    flex-direction: column;
+    gap: 5px;
+  }
+  
+  .effects-list {
+    justify-content: center;
+  }
+}
+
+/* Loading animation */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.three-viewer-placeholder {
+  animation: pulse 2s infinite;
+}
