@@ -1,4 +1,3 @@
-// src/api/client.js - FIXED VERSION
 import axios from 'axios';
 
 // Get API URL from environment variables with fallback
@@ -17,8 +16,7 @@ const getApiUrl = () => {
     }
   }
   
-  // Production fallback (replace with your actual Render URL)
-  return 'https://your-render-app-name.onrender.com/api';
+  return 'https://revolve360-backend.onrender.comm/api';
 };
 
 const API_BASE_URL = getApiUrl();
