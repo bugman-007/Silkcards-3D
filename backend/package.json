@@ -1,16 +1,27 @@
 {
   "name": "revolve360-backend",
-  "version": "1.0.0",
-  "description": "Backend for SilkCards 3D preview tool",
+  "version": "2.0.0",
+  "description": "Enhanced Backend for SilkCards 3D preview tool with advanced AI file parsing",
   "main": "src/app.js",
   "type": "module",
   "scripts": {
     "start": "node -r dotenv/config src/app.js dotenv_config_path=.env.production",
     "dev": "node -r dotenv/config --watch src/app.js dotenv_config_path=.env.development",
-    "test": "node -r dotenv/config src/app.js dotenv_config_path=.env.development"
+    "test": "node -r dotenv/config src/app.js dotenv_config_path=.env.development",
+    "parse-test": "node scripts/test-parser.js",
+    "install-deps": "npm install",
+    "setup": "npm run install-deps && npm run test"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "ai",
+    "pdf",
+    "parsing",
+    "3d",
+    "preview",
+    "silkcards",
+    "illustrator"
+  ],
+  "author": "SilkCards 3D Team",
   "license": "ISC",
   "dependencies": {
     "body-parser": "^1.20.2",
@@ -21,7 +32,23 @@
     "fabric": "^5.3.0",
     "fs-extra": "^11.1.1",
     "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.1",
+    "pdf2json": "^3.2.0",
+    "pdfjs-dist": "^4.10.38",
     "sharp": "^0.32.6",
     "uuid": "^9.0.1"
+  },
+  "optionalDependencies": {
+    "@opendesign/illustrator-parser-pdfcpu": "^1.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/silkcards/revolve360-backend"
   }
 }
