@@ -1,7 +1,8 @@
-// src/App.jsx - UPDATED VERSION
+// src/App.jsx - UPDATED WITH HEALTH CHECK
 import { useState } from 'react'
 import './App.css'
 import FileUploader from './components/FileUploader'
+import HealthCheck from './components/HealthCheck'
 
 function App() {
   const [uploadedData, setUploadedData] = useState(null);
@@ -20,6 +21,7 @@ function App() {
       
       <main className="main-content">
         <div className="upload-area">
+          <HealthCheck />
           <FileUploader onFileUpload={handleFileUpload} />
           
           {uploadedData && (
@@ -27,13 +29,14 @@ function App() {
               <h3>Analysis Complete!</h3>
               <div className="result-details">
                 <p><strong>File:</strong> {uploadedData.file.name}</p>
+                <p><strong>File ID:</strong> {uploadedData.uploadResult.data.fileId}</p>
                 <p><strong>Layers found:</strong> {uploadedData.parseResult.layers.length}</p>
                 <p><strong>Effects detected:</strong></p>
-                <ul>
+                <ul style={{ textAlign: 'left', marginTop: '10px' }}>
                   {Object.entries(uploadedData.parseResult.effects).map(([effect, items]) => (
                     items.length > 0 && (
                       <li key={effect}>
-                        {effect}: {items.length} instances
+                        <strong>{effect}:</strong> {items.length} instances
                       </li>
                     )
                   ))}
