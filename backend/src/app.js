@@ -30,29 +30,23 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, embeds)
     if (!origin) return callback(null, true);
-    
-    // Check if origin matches allowed origins
-    const isAllowed = allowedOrigins.some(allowedOrigin => {
-      if (typeof allowedOrigin === 'string') {
-        return allowedOrigin === origin;
-      } else if (allowedOrigin instanceof RegExp) {
-        return allowedOrigin.test(origin);
-      }
-      return false;
-    });
-    
+
+    const isAllowed = allowedOrigins.some(allowedOrigin =>
+      typeof allowedOrigin === 'string'
+        ? allowedOrigin === origin
+        : allowedOrigin.test(origin)
+    );
+
     if (isAllowed) {
       return callback(null, true);
     }
-    
-    console.log('CORS blocked origin:', origin);
-    const msg = `CORS policy blocked origin: ${origin}`;
-    return callback(new Error(msg), false);
+
+    console.warn('❌ CORS blocked origin:', origin);
+    // Reject but don’t break OPTIONS preflight
+    return callback(null, false);
   },
   credentials: true,
-  // Allow embedding in iframes
   optionsSuccessStatus: 200
 }));
 
