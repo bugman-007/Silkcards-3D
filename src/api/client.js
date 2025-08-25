@@ -17,8 +17,7 @@ const getApiUrl = () => {
     }
   }
   
-  // Production fallback (replace with your actual Render URL)
-  return 'https://your-render-app-name.onrender.com/api';
+  return 'https://revolve360-backend.onrender.com/api';
 };
 
 const API_BASE_URL = getApiUrl();
