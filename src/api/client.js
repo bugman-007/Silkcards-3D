@@ -143,7 +143,7 @@ export const getFileStatus = async (fileId) => {
 export const healthCheck = async () => {
   try {
     console.log('🔍 Checking backend health...');
-    const response = await apiClient.get('/health');
+    const response = await apiClient.get('/api/health');
     console.log('✅ Backend healthy:', response.data);
     return response.data;
   } catch (error) {
