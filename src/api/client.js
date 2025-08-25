@@ -16,7 +16,7 @@ const getApiUrl = () => {
     }
   }
   
-  return 'https://revolve360-backend.onrender.comm/api';
+  return 'https://revolve360-backend.onrender.com/api';
 };
 
 const API_BASE_URL = getApiUrl();
