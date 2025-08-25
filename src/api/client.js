@@ -79,7 +79,7 @@ export const uploadFile = async (file) => {
   try {
     console.log('📤 Uploading file:', file.name, `(${(file.size / (1024 * 1024)).toFixed(2)} MB)`);
     
-    const response = await apiClient.post('/upload', formData, {
+    const response = await apiClient.post('/api/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
