@@ -120,7 +120,7 @@ export const parseFile = async (fileId) => {
 // Get parse results
 export const getParseResults = async (fileId) => {
   try {
-    const response = await apiClient.get(`/parse/${fileId}`);
+    const response = await apiClient.get(`/api/parse/${fileId}`);
     return response.data;
   } catch (error) {
     console.error('❌ Get parse results error:', error);
@@ -131,7 +131,7 @@ export const getParseResults = async (fileId) => {
 // Get file status
 export const getFileStatus = async (fileId) => {
   try {
-    const response = await apiClient.get(`/parse/${fileId}/status`);
+    const response = await apiClient.get(`/api/parse/${fileId}/status`);
     return response.data;
   } catch (error) {
     console.error('❌ Status check error:', error);
