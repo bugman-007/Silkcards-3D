@@ -1,16 +1,27 @@
-// backend/src/routes/parse.js - UPDATED WITH ENHANCED PARSER
+// backend/src/routes/parse.js - COMPLETE REWRITE FOR MICROSERVICE
 import express from 'express';
 import path from 'path';
 import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
-import AIParserV2 from '../parsers/AIParserV2.js';
+import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+import crypto from 'crypto';
+import FormData from 'form-data';
 
 // ES6 module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = express.Router();
-const parser = new AIParserV2();
+
+// Parser service configuration
+const PARSER_SERVICE_URL = process.env.PARSER_SERVICE_URL || 'https://parser.yourdomain.com';
+const PARSER_API_KEY = process.env.PARSER_API_KEY;
+const PARSER_HMAC_SECRET = process.env.PARSER_HMAC_SECRET;
+
+if (!PARSER_API_KEY || !PARSER_HMAC_SECRET) {
+  console.warn('⚠️ Parser service credentials not configured');
+}
 
 // Helper function to find uploaded file
 async function findUploadedFile(fileId) {
@@ -31,19 +42,33 @@ async function findUploadedFile(fileId) {
   }
 }
 
-// Parse uploaded file - ENHANCED VERSION
+// Generate HMAC signature for request
+function signRequest(fileBuffer, options, timestamp) {
+  const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+  const payload = `${fileHash}${JSON.stringify(options)}${timestamp}`;
+  return crypto.createHmac('sha256', PARSER_HMAC_SECRET).update(payload).digest('hex');
+}
+
+// Submit parse job to microservice - MAIN ENDPOINT
 router.post('/:fileId', async (req, res) => {
   const startTime = Date.now();
   
   try {
     const { fileId } = req.params;
+    const options = {
+      dpi: req.body.dpi || 600,
+      extractVector: req.body.extractVector !== false,
+      enableOCG: req.body.enableOCG !== false,
+      ...req.body
+    };
     
-    console.log('🔄 Starting enhanced parse for file:', fileId);
+    console.log('🔄 Submitting parse job for file:', fileId);
     
     // Find the uploaded file
     const filePath = await findUploadedFile(fileId);
     if (!filePath) {
       return res.status(404).json({ 
+        success: false,
         error: 'File not found',
         fileId,
         suggestion: 'Please check the file ID or re-upload the file'
@@ -56,317 +81,302 @@ router.post('/:fileId', async (req, res) => {
     const fileStats = await fs.stat(filePath);
     if (!fileStats.isFile()) {
       return res.status(400).json({
+        success: false,
         error: 'Invalid file',
         fileId,
         message: 'The specified path is not a valid file'
       });
     }
 
-    console.log(`📊 File info: ${(fileStats.size / 1024).toFixed(1)}KB, modified: ${fileStats.mtime}`);
+    // Generate job ID and read file
+    const jobId = uuidv4();
+    const fileBuffer = await fs.readFile(filePath);
+    const timestamp = Date.now().toString();
     
-    // Parse the file with enhanced parser
-    console.time(`PARSING_${fileId}`);
-    const parseResult = await parser.parseFile(filePath);
-    console.timeEnd(`PARSING_${fileId}`);
+    console.log(`📊 File info: ${(fileStats.size / 1024).toFixed(1)}KB`);
     
-    // Save parse result for caching
-    const resultPath = path.join(path.dirname(filePath), `${fileId}_parsed.json`);
-    await fs.writeJson(resultPath, parseResult, { spaces: 2 });
+    // Create HMAC signature
+    const signature = signRequest(fileBuffer, options, timestamp);
+    
+    // Create form data for multipart upload
+    const formData = new FormData();
+    formData.append('file', fileBuffer, {
+      filename: path.basename(filePath),
+      contentType: filePath.endsWith('.pdf') ? 'application/pdf' : 'application/illustrator'
+    });
+    formData.append('options', JSON.stringify(options));
+    formData.append('timestamp', timestamp);
+    
+    console.log('🚀 Submitting to parser microservice...');
+    console.time(`PARSE_SUBMISSION_${fileId}`);
+    
+    // Submit to parser microservice
+    const response = await axios.post(`${PARSER_SERVICE_URL}/jobs?jobId=${jobId}`, formData, {
+      headers: {
+        'X-API-Key': PARSER_API_KEY,
+        'X-Signature': signature,
+        ...formData.getHeaders()
+      },
+      timeout: 60000, // 60s timeout for upload
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
+
+    console.timeEnd(`PARSE_SUBMISSION_${fileId}`);
     
     const totalTime = Date.now() - startTime;
     
-    console.log('💾 Parse result saved to:', path.basename(resultPath));
-    console.log(`✅ Total processing time: ${totalTime}ms`);
-    console.log(`📈 Parsing confidence: ${(parseResult.confidence * 100).toFixed(1)}%`);
-    console.log(`🎨 Effects found: ${Object.keys(parseResult.effects).filter(key => 
-      parseResult.effects[key].length > 0
-    ).join(', ') || 'None'}`);
+    console.log('✅ Job submitted successfully:', jobId);
+    console.log(`⏱️ Submission time: ${totalTime}ms`);
     
-    // Return comprehensive result
+    // Return job information
     res.json({
       success: true,
+      jobId: response.data.jobId,
+      status: response.data.status,
       fileId,
       originalFile: path.basename(filePath),
+      submittedAt: response.data.submittedAt || new Date().toISOString(),
       processingTime: totalTime,
-      ...parseResult
+      options: options
     });
 
   } catch (error) {
     const totalTime = Date.now() - startTime;
     
-    console.error('❌ Parse error:', error);
+    console.error('❌ Parse submission error:', error.message);
     console.log(`⏱️ Failed after: ${totalTime}ms`);
     
-    // Return detailed error information
-    res.status(500).json({ 
+    // Handle different error types
+    let errorMessage = 'Failed to submit parse job';
+    let statusCode = 500;
+    
+    if (error.code === 'ECONNREFUSED') {
+      errorMessage = 'Parser service unavailable';
+      statusCode = 503;
+    } else if (error.response?.status === 401) {
+      errorMessage = 'Parser service authentication failed';
+      statusCode = 401;
+    } else if (error.response?.status === 413) {
+      errorMessage = 'File too large for parser service';
+      statusCode = 413;
+    } else if (error.code === 'ENOTFOUND') {
+      errorMessage = 'Parser service not found';
+      statusCode = 503;
+    }
+    
+    res.status(statusCode).json({ 
       success: false,
-      error: 'Parsing failed', 
+      error: errorMessage,
       message: error.message,
       fileId: req.params.fileId,
       processingTime: totalTime,
       errorType: error.constructor.name,
-      suggestion: 'Try uploading a different file format or check if the file is corrupted'
+      suggestion: statusCode === 503 ? 'Parser service may be starting up, please try again in a few minutes' : 'Please try uploading a different file'
     });
   }
 });
 
-// Get previously parsed result - ENHANCED
+// Get job status - PROXY TO MICROSERVICE
+router.get('/status/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    
+    console.log('📊 Checking status for job:', jobId);
+    
+    const response = await axios.get(`${PARSER_SERVICE_URL}/status/${jobId}`, {
+      headers: { 'X-API-Key': PARSER_API_KEY },
+      timeout: 10000
+    });
+    
+    console.log(`✅ Status check successful: ${response.data.status}`);
+    
+    res.json({
+      success: true,
+      ...response.data
+    });
+    
+  } catch (error) {
+    console.error('❌ Status check failed:', error.message);
+    
+    let errorMessage = 'Status check failed';
+    let statusCode = 500;
+    
+    if (error.response?.status === 404) {
+      errorMessage = 'Job not found';
+      statusCode = 404;
+    } else if (error.code === 'ECONNREFUSED') {
+      errorMessage = 'Parser service unavailable';
+      statusCode = 503;
+    }
+    
+    res.status(statusCode).json({
+      success: false,
+      error: errorMessage,
+      message: error.message,
+      jobId: req.params.jobId
+    });
+  }
+});
+
+// Get parse result - PROXY TO MICROSERVICE
+router.get('/result/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    
+    console.log('📖 Fetching result for job:', jobId);
+    
+    const response = await axios.get(`${PARSER_SERVICE_URL}/jobs/${jobId}/result.json`, {
+      headers: { 'X-API-Key': PARSER_API_KEY },
+      timeout: 15000
+    });
+    
+    console.log('✅ Result fetched successfully');
+    
+    // Add job ID and backend metadata
+    const result = {
+      success: true,
+      jobId,
+      cached: false,
+      fetchedAt: new Date().toISOString(),
+      ...response.data
+    };
+    
+    res.json(result);
+    
+  } catch (error) {
+    console.error('❌ Result fetch failed:', error.message);
+    
+    let errorMessage = 'Failed to fetch parse result';
+    let statusCode = 500;
+    
+    if (error.response?.status === 404) {
+      errorMessage = 'Parse result not found';
+      statusCode = 404;
+    } else if (error.code === 'ECONNREFUSED') {
+      errorMessage = 'Parser service unavailable';
+      statusCode = 503;
+    }
+    
+    res.status(statusCode).json({
+      success: false,
+      error: errorMessage,
+      message: error.message,
+      jobId: req.params.jobId
+    });
+  }
+});
+
+// Get asset files (textures, masks) - STREAM PROXY
+router.get('/assets/:jobId/:filename', async (req, res) => {
+  try {
+    const { jobId, filename } = req.params;
+    
+    console.log('🖼️ Serving asset:', jobId, filename);
+    
+    const response = await axios.get(`${PARSER_SERVICE_URL}/jobs/${jobId}/assets/${filename}`, {
+      headers: { 'X-API-Key': PARSER_API_KEY },
+      responseType: 'stream',
+      timeout: 30000
+    });
+    
+    // Set appropriate headers for asset serving
+    res.set({
+      'Content-Type': response.headers['content-type'] || (
+        filename.endsWith('.png') ? 'image/png' :
+        filename.endsWith('.svg') ? 'image/svg+xml' :
+        filename.endsWith('.jpg') || filename.endsWith('.jpeg') ? 'image/jpeg' :
+        'application/octet-stream'
+      ),
+      'Content-Length': response.headers['content-length'],
+      'Cache-Control': 'public, max-age=31536000, immutable', // 1 year cache
+      'ETag': response.headers['etag'],
+      'Last-Modified': response.headers['last-modified']
+    });
+    
+    // Stream the response
+    response.data.pipe(res);
+    
+    console.log('✅ Asset served successfully');
+    
+  } catch (error) {
+    console.error('❌ Asset serving failed:', error.message);
+    
+    let statusCode = 500;
+    
+    if (error.response?.status === 404) {
+      statusCode = 404;
+    } else if (error.code === 'ECONNREFUSED') {
+      statusCode = 503;
+    }
+    
+    res.status(statusCode).json({
+      success: false,
+      error: 'Asset not found',
+      message: error.message,
+      jobId: req.params.jobId,
+      filename: req.params.filename
+    });
+  }
+});
+
+// Legacy endpoint support - Get previously parsed result
 router.get('/:fileId', async (req, res) => {
   try {
     const { fileId } = req.params;
-    const uploadsPath = path.join(__dirname, '../../uploads');
-    const resultPath = path.join(uploadsPath, `${fileId}_parsed.json`);
     
-    if (await fs.pathExists(resultPath)) {
-      const parseResult = await fs.readJson(resultPath);
-      const stats = await fs.stat(resultPath);
-      
-      console.log('📖 Serving cached parse result for:', fileId);
-      
-      res.json({
-        success: true,
-        cached: true,
-        cachedAt: stats.mtime,
-        cacheAge: Date.now() - stats.mtime.getTime(),
-        ...parseResult
-      });
-    } else {
-      res.status(404).json({ 
-        error: 'No parsing result found for this file',
-        fileId,
-        suggestion: 'Parse the file first with POST /api/parse/:fileId'
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Get parse result error:', error);
-    res.status(500).json({ 
+    // This endpoint is deprecated but kept for backward compatibility
+    console.log('⚠️ Legacy endpoint called:', fileId);
+    
+    res.status(410).json({ 
       success: false,
-      error: 'Failed to retrieve parse result', 
-      message: error.message,
-      fileId: req.params.fileId
-    });
-  }
-});
-
-// Get detailed parsing status - ENHANCED
-router.get('/:fileId/status', async (req, res) => {
-  try {
-    const { fileId } = req.params;
-    const uploadsPath = path.join(__dirname, '../../uploads');
-    
-    // Check if original file exists
-    const originalFilePath = await findUploadedFile(fileId);
-    if (!originalFilePath) {
-      return res.json({
-        status: 'not_found',
-        message: 'Original file not found',
-        fileId
-      });
-    }
-
-    const originalStats = await fs.stat(originalFilePath);
-    const fileExtension = path.extname(originalFilePath).toLowerCase();
-    const fileName = path.basename(originalFilePath);
-
-    // Check if parsing result exists
-    const resultPath = path.join(uploadsPath, `${fileId}_parsed.json`);
-    const hasResult = await fs.pathExists(resultPath);
-
-    if (hasResult) {
-      const result = await fs.readJson(resultPath);
-      const resultStats = await fs.stat(resultPath);
-      
-      // Calculate effect statistics
-      const totalEffects = Object.values(result.effects).flat().length;
-      const effectTypes = Object.keys(result.effects).filter(key => 
-        result.effects[key].length > 0
-      );
-
-      res.json({
-        status: 'completed',
-        fileId,
-        fileName,
-        fileExtension,
-        fileSize: originalStats.size,
-        uploadedAt: originalStats.birthtime,
-        parsedAt: result.parsedAt,
-        parsingMethod: result.parsingMethod,
-        parsingTime: result.parsingTime,
-        confidence: result.confidence,
-        cacheAge: Date.now() - resultStats.mtime.getTime(),
-        statistics: {
-          layerCount: result.layers.length,
-          effectCount: totalEffects,
-          effectTypes: effectTypes,
-          hasText: result.metadata?.hasText || false,
-          hasImages: result.metadata?.hasImages || false,
-          colorMode: result.metadata?.colorMode || 'Unknown',
-          resolution: result.metadata?.resolution || 'Unknown'
-        }
-      });
-    } else {
-      res.json({
-        status: 'uploaded',
-        fileId,
-        fileName,
-        fileExtension,
-        fileSize: originalStats.size,
-        uploadedAt: originalStats.birthtime,
-        message: 'File uploaded but not yet parsed',
-        suggestion: 'Use POST /api/parse/:fileId to parse the file'
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Status check error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Status check failed', 
-      message: error.message,
-      fileId: req.params.fileId
-    });
-  }
-});
-
-// Reparse file with different options - NEW ENDPOINT
-router.post('/:fileId/reparse', async (req, res) => {
-  try {
-    const { fileId } = req.params;
-    const { forceFallback = false, clearCache = false } = req.body;
-    
-    console.log('🔄 Reparsing file:', fileId, { forceFallback, clearCache });
-    
-    const filePath = await findUploadedFile(fileId);
-    if (!filePath) {
-      return res.status(404).json({ 
-        error: 'File not found',
-        fileId
-      });
-    }
-
-    // Clear cache if requested
-    if (clearCache) {
-      const resultPath = path.join(path.dirname(filePath), `${fileId}_parsed.json`);
-      if (await fs.pathExists(resultPath)) {
-        await fs.remove(resultPath);
-        console.log('🗑️ Cleared cached result');
-      }
-    }
-
-    // Force fallback parsing if requested
-    let parseResult;
-    if (forceFallback) {
-      console.log('🧠 Forcing fallback parsing mode');
-      parseResult = await parser.intelligentFallbackParse(filePath);
-      parseResult.parsingMethod = 'forced_fallback';
-      parseResult.confidence = Math.max(parseResult.confidence - 0.2, 0.1);
-    } else {
-      parseResult = await parser.parseFile(filePath);
-    }
-
-    // Save new result
-    const resultPath = path.join(path.dirname(filePath), `${fileId}_parsed.json`);
-    await fs.writeJson(resultPath, parseResult, { spaces: 2 });
-    
-    res.json({
-      success: true,
+      error: 'Legacy endpoint deprecated',
+      message: 'This endpoint has been replaced by the job-based parsing system',
       fileId,
-      reparsed: true,
-      originalFile: path.basename(filePath),
-      ...parseResult
+      migration: {
+        'old': `GET /api/parse/${fileId}`,
+        'new': 'POST /api/parse/:fileId -> GET /api/parse/result/:jobId'
+      }
     });
 
   } catch (error) {
-    console.error('❌ Reparse error:', error);
+    console.error('❌ Legacy endpoint error:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Reparse failed', 
+      error: 'Legacy endpoint failed', 
       message: error.message,
       fileId: req.params.fileId
     });
   }
 });
 
-// Get parsing statistics - NEW ENDPOINT
-router.get('/stats/summary', async (req, res) => {
+// Health check for parser service
+router.get('/health/parser', async (req, res) => {
   try {
-    const uploadsPath = path.join(__dirname, '../../uploads');
-    const files = await fs.readdir(uploadsPath);
+    const response = await axios.get(`${PARSER_SERVICE_URL}/health`, {
+      headers: { 'X-API-Key': PARSER_API_KEY },
+      timeout: 5000
+    });
     
-    const parseResults = [];
-    const jsonFiles = files.filter(f => f.endsWith('_parsed.json'));
-    
-    for (const jsonFile of jsonFiles) {
-      try {
-        const result = await fs.readJson(path.join(uploadsPath, jsonFile));
-        parseResults.push(result);
-      } catch (error) {
-        // Skip invalid JSON files
-      }
-    }
-
-    const stats = {
-      totalParsed: parseResults.length,
-      parsingMethods: {},
-      averageConfidence: 0,
-      averageParsingTime: 0,
-      effectsStats: {
-        foil: 0,
-        spotUV: 0,
-        emboss: 0,
-        diecut: 0,
-        edge: 0
-      },
-      fileTypes: {}
-    };
-
-    // Calculate statistics
-    if (parseResults.length > 0) {
-      let totalConfidence = 0;
-      let totalParsingTime = 0;
-
-      parseResults.forEach(result => {
-        // Parsing methods
-        const method = result.parsingMethod || 'unknown';
-        stats.parsingMethods[method] = (stats.parsingMethods[method] || 0) + 1;
-        
-        // Confidence
-        totalConfidence += result.confidence || 0;
-        
-        // Parsing time
-        totalParsingTime += result.parsingTime || 0;
-        
-        // File types
-        const fileType = result.fileType || 'unknown';
-        stats.fileTypes[fileType] = (stats.fileTypes[fileType] || 0) + 1;
-        
-        // Effects
-        if (result.effects) {
-          Object.keys(stats.effectsStats).forEach(effect => {
-            if (result.effects[effect] && result.effects[effect].length > 0) {
-              stats.effectsStats[effect]++;
-            }
-          });
-        }
-      });
-
-      stats.averageConfidence = totalConfidence / parseResults.length;
-      stats.averageParsingTime = totalParsingTime / parseResults.length;
-    }
-
     res.json({
       success: true,
-      statistics: stats,
-      generatedAt: new Date().toISOString()
+      parserService: {
+        status: 'healthy',
+        url: PARSER_SERVICE_URL,
+        response: response.data
+      }
     });
-
+    
   } catch (error) {
-    console.error('❌ Stats error:', error);
-    res.status(500).json({ 
+    console.error('❌ Parser service health check failed:', error.message);
+    
+    res.status(503).json({
       success: false,
-      error: 'Failed to generate statistics', 
-      message: error.message
+      parserService: {
+        status: 'unhealthy',
+        url: PARSER_SERVICE_URL,
+        error: error.message
+      }
     });
   }
 });

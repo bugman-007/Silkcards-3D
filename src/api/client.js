@@ -1,3 +1,4 @@
+// src/api/client.js - UPDATED FOR JOB QUEUE SYSTEM
 import axios from 'axios';
 
 // Get API URL from environment variables with fallback
@@ -25,7 +26,7 @@ console.log('🔗 API Base URL:', API_BASE_URL);
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 1200000, // 2 minutes timeout for cold starts
+  timeout: 180000, // 3 minutes timeout for job operations
   headers: {
     'Content-Type': 'application/json',
   },
@@ -59,11 +60,15 @@ apiClient.interceptors.response.use(
     
     // Handle specific error cases
     if (error.code === 'ECONNABORTED') {
-      throw new Error('Request timeout - server might be starting up');
+      throw new Error('Request timeout - parser service might be busy');
     }
     
     if (error.response?.status === 403) {
       throw new Error('CORS error - frontend domain not allowed');
+    }
+    
+    if (error.response?.status === 503) {
+      throw new Error('Parser service unavailable - please try again in a few minutes');
     }
     
     return Promise.reject(error);
@@ -88,6 +93,7 @@ export const uploadFile = async (file) => {
         );
         console.log(`📤 Upload progress: ${percentCompleted}%`);
       },
+      timeout: 120000, // 2 minutes for upload
     });
     
     console.log('✅ Upload successful:', response.data);
@@ -103,38 +109,75 @@ export const uploadFile = async (file) => {
   }
 };
 
-// Parse uploaded file
-export const parseFile = async (fileId) => {
+// Submit parse job to microservice - NEW JOB-BASED SYSTEM
+export const parseFile = async (fileId, options = {}) => {
   try {
-    console.log('🔍 Parsing file:', fileId);
-    const response = await apiClient.post(`/parse/${fileId}`);
-    console.log('✅ Parse successful:', response.data);
+    console.log('🔍 Submitting parse job for file:', fileId);
+    
+    const response = await apiClient.post(`/parse/${fileId}`, {
+      dpi: options.dpi || 600,
+      extractVector: options.extractVector !== false,
+      enableOCG: options.enableOCG !== false,
+      ...options
+    });
+    
+    console.log('✅ Parse job submitted:', response.data);
     return response.data;
   } catch (error) {
-    console.error('❌ Parse error:', error);
-    throw new Error(error.response?.data?.message || error.message || 'Parsing failed');
+    console.error('❌ Parse submission error:', error);
+    throw new Error(error.response?.data?.message || error.message || 'Failed to submit parse job');
   }
 };
 
-// Get parse results
-export const getParseResults = async (fileId) => {
+// Get job status - POLL FOR PROGRESS
+export const getParseStatus = async (jobId) => {
   try {
-    const response = await apiClient.get(`/parse/${fileId}`);
-    return response.data;
-  } catch (error) {
-    console.error('❌ Get parse results error:', error);
-    throw new Error(error.response?.data?.message || error.message || 'Failed to get results');
-  }
-};
-
-// Get file status
-export const getFileStatus = async (fileId) => {
-  try {
-    const response = await apiClient.get(`/parse/${fileId}/status`);
+    const response = await apiClient.get(`/parse/status/${jobId}`);
     return response.data;
   } catch (error) {
     console.error('❌ Status check error:', error);
     throw new Error(error.response?.data?.message || error.message || 'Status check failed');
+  }
+};
+
+// Get final parse result - WHEN JOB IS COMPLETE
+export const getParseResult = async (jobId) => {
+  try {
+    console.log('📖 Fetching parse result for job:', jobId);
+    const response = await apiClient.get(`/parse/result/${jobId}`);
+    console.log('✅ Parse result retrieved:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Result fetch error:', error);
+    throw new Error(error.response?.data?.message || error.message || 'Failed to get parse result');
+  }
+};
+
+// Get asset URL for textures - HELPER FUNCTION
+export const getAssetUrl = (jobId, filename) => {
+  return `${API_BASE_URL}/parse/assets/${jobId}/${filename}`;
+};
+
+// Legacy functions - KEPT FOR BACKWARD COMPATIBILITY
+export const getParseResults = async (fileId) => {
+  try {
+    console.warn('⚠️ Using deprecated getParseResults function');
+    const response = await apiClient.get(`/parse/${fileId}`);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Legacy get parse results error:', error);
+    throw new Error('This endpoint is deprecated. Please use the new job-based parsing system.');
+  }
+};
+
+export const getFileStatus = async (fileId) => {
+  try {
+    console.warn('⚠️ Using deprecated getFileStatus function');
+    const response = await apiClient.get(`/parse/${fileId}/status`);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Legacy status check error:', error);
+    throw new Error('This endpoint is deprecated. Please use getParseStatus with jobId.');
   }
 };
 
@@ -147,6 +190,19 @@ export const healthCheck = async () => {
     return response.data;
   } catch (error) {
     console.error('❌ Health check failed:', error);
+    throw error;
+  }
+};
+
+// Check parser service health
+export const parserHealthCheck = async () => {
+  try {
+    console.log('🔍 Checking parser service health...');
+    const response = await apiClient.get('/parse/health/parser');
+    console.log('✅ Parser service healthy:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Parser health check failed:', error);
     throw error;
   }
 };
@@ -174,6 +230,80 @@ export const getSharedCard = async (shareId) => {
   } catch (error) {
     console.error('❌ Failed to get shared card:', error);
     throw new Error(error.response?.data?.message || error.message || 'Failed to get shared card');
+  }
+};
+
+// Polling utility for job status
+export const pollJobStatus = async (jobId, onProgress = null, maxAttempts = 60, interval = 2000) => {
+  let attempts = 0;
+  
+  while (attempts < maxAttempts) {
+    try {
+      const status = await getParseStatus(jobId);
+      
+      if (onProgress) {
+        onProgress(status);
+      }
+      
+      if (status.status === 'completed') {
+        console.log('✅ Job completed successfully');
+        return await getParseResult(jobId);
+      } else if (status.status === 'failed') {
+        console.error('❌ Job failed:', status.error);
+        throw new Error(status.error || 'Job failed');
+      }
+      
+      // Job still processing, wait and try again
+      await new Promise(resolve => setTimeout(resolve, interval));
+      attempts++;
+      
+    } catch (error) {
+      console.error('❌ Polling error:', error);
+      throw error;
+    }
+  }
+  
+  throw new Error('Job timed out - exceeded maximum polling attempts');
+};
+
+// Complete file processing workflow
+export const processFile = async (file, options = {}, onProgress = null) => {
+  try {
+    // Step 1: Upload file
+    if (onProgress) onProgress({ step: 'uploading', progress: 0 });
+    const uploadResult = await uploadFile(file);
+    
+    // Step 2: Submit parse job
+    if (onProgress) onProgress({ step: 'submitting', progress: 20 });
+    const parseJob = await parseFile(uploadResult.data.fileId, options);
+    
+    // Step 3: Poll for completion
+    if (onProgress) onProgress({ step: 'parsing', progress: 30 });
+    
+    const result = await pollJobStatus(parseJob.jobId, (status) => {
+      if (onProgress) {
+        onProgress({ 
+          step: 'parsing', 
+          progress: 30 + (status.progress || 0) * 0.7,
+          status: status.status 
+        });
+      }
+    });
+    
+    // Step 4: Complete
+    if (onProgress) onProgress({ step: 'completed', progress: 100 });
+    
+    return {
+      file,
+      uploadResult,
+      parseResult: result,
+      jobId: parseJob.jobId
+    };
+    
+  } catch (error) {
+    console.error('❌ Complete file processing failed:', error);
+    if (onProgress) onProgress({ step: 'failed', error: error.message });
+    throw error;
   }
 };
 
