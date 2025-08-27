@@ -1,4 +1,4 @@
-// src/api/client.js - UPDATED FOR JOB QUEUE SYSTEM
+// src/api/client.js - COMPLETE FIXED VERSION WITH INTEGRATED WORKFLOW
 import axios from 'axios';
 
 // Get API URL from environment variables with fallback
@@ -109,7 +109,7 @@ export const uploadFile = async (file) => {
   }
 };
 
-// Submit parse job to microservice - NEW JOB-BASED SYSTEM
+// Submit parse job to microservice
 export const parseFile = async (fileId, options = {}) => {
   try {
     console.log('🔍 Submitting parse job for file:', fileId);
@@ -129,7 +129,7 @@ export const parseFile = async (fileId, options = {}) => {
   }
 };
 
-// Get job status - POLL FOR PROGRESS
+// Get job status
 export const getParseStatus = async (jobId) => {
   try {
     const response = await apiClient.get(`/parse/status/${jobId}`);
@@ -140,7 +140,7 @@ export const getParseStatus = async (jobId) => {
   }
 };
 
-// Get final parse result - WHEN JOB IS COMPLETE
+// Get final parse result
 export const getParseResult = async (jobId) => {
   try {
     console.log('📖 Fetching parse result for job:', jobId);
@@ -153,32 +153,9 @@ export const getParseResult = async (jobId) => {
   }
 };
 
-// Get asset URL for textures - HELPER FUNCTION
+// Get asset URL for textures
 export const getAssetUrl = (jobId, filename) => {
   return `${API_BASE_URL}/parse/assets/${jobId}/${filename}`;
-};
-
-// Legacy functions - KEPT FOR BACKWARD COMPATIBILITY
-export const getParseResults = async (fileId) => {
-  try {
-    console.warn('⚠️ Using deprecated getParseResults function');
-    const response = await apiClient.get(`/parse/${fileId}`);
-    return response.data;
-  } catch (error) {
-    console.error('❌ Legacy get parse results error:', error);
-    throw new Error('This endpoint is deprecated. Please use the new job-based parsing system.');
-  }
-};
-
-export const getFileStatus = async (fileId) => {
-  try {
-    console.warn('⚠️ Using deprecated getFileStatus function');
-    const response = await apiClient.get(`/parse/${fileId}/status`);
-    return response.data;
-  } catch (error) {
-    console.error('❌ Legacy status check error:', error);
-    throw new Error('This endpoint is deprecated. Please use getParseStatus with jobId.');
-  }
 };
 
 // Health check for testing connection
@@ -266,32 +243,33 @@ export const pollJobStatus = async (jobId, onProgress = null, maxAttempts = 60, 
   throw new Error('Job timed out - exceeded maximum polling attempts');
 };
 
-// Complete file processing workflow
+// 🔥 INTEGRATED WORKFLOW: Complete file processing workflow
 export const processFile = async (file, options = {}, onProgress = null) => {
   try {
     // Step 1: Upload file
-    if (onProgress) onProgress({ step: 'uploading', progress: 0 });
+    if (onProgress) onProgress({ step: 'uploading', progress: 0, status: 'Uploading file...' });
     const uploadResult = await uploadFile(file);
     
     // Step 2: Submit parse job
-    if (onProgress) onProgress({ step: 'submitting', progress: 20 });
+    if (onProgress) onProgress({ step: 'submitting', progress: 20, status: 'Submitting to parser service...' });
     const parseJob = await parseFile(uploadResult.data.fileId, options);
     
     // Step 3: Poll for completion
-    if (onProgress) onProgress({ step: 'parsing', progress: 30 });
+    if (onProgress) onProgress({ step: 'parsing', progress: 30, status: 'Starting AI analysis...' });
     
     const result = await pollJobStatus(parseJob.jobId, (status) => {
       if (onProgress) {
         onProgress({ 
           step: 'parsing', 
           progress: 30 + (status.progress || 0) * 0.7,
-          status: status.status 
+          status: status.status,
+          jobId: parseJob.jobId
         });
       }
     });
     
     // Step 4: Complete
-    if (onProgress) onProgress({ step: 'completed', progress: 100 });
+    if (onProgress) onProgress({ step: 'completed', progress: 100, status: 'Processing completed!' });
     
     return {
       file,
@@ -304,6 +282,29 @@ export const processFile = async (file, options = {}, onProgress = null) => {
     console.error('❌ Complete file processing failed:', error);
     if (onProgress) onProgress({ step: 'failed', error: error.message });
     throw error;
+  }
+};
+
+// Legacy functions - KEPT FOR BACKWARD COMPATIBILITY
+export const getParseResults = async (fileId) => {
+  try {
+    console.warn('⚠️ Using deprecated getParseResults function');
+    const response = await apiClient.get(`/parse/${fileId}`);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Legacy get parse results error:', error);
+    throw new Error('This endpoint is deprecated. Please use the new job-based parsing system.');
+  }
+};
+
+export const getFileStatus = async (fileId) => {
+  try {
+    console.warn('⚠️ Using deprecated getFileStatus function');
+    const response = await apiClient.get(`/parse/${fileId}/status`);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Legacy status check error:', error);
+    throw new Error('This endpoint is deprecated. Please use getParseStatus with jobId.');
   }
 };
 

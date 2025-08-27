@@ -1,4 +1,4 @@
-// backend/src/routes/parse.js - COMPLETE PRODUCTION VERSION FOR EC2 INTEGRATION
+// backend/src/routes/parse.js - COMPLETE FIXED VERSION
 import express from 'express';
 import path from 'path';
 import fs from 'fs-extra';

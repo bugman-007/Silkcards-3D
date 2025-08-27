@@ -1,7 +1,7 @@
-// src/components/CardModel.jsx - COMPLETE PRODUCTION 3D RENDERER
+// src/components/CardModel.jsx - COMPLETE PRODUCTION VERSION WITH FULL JOBID SUPPORT
 import { useRef, useState, useEffect, useMemo } from 'react';
-import { useFrame, useLoader } from '@react-three/fiber';
-import { Box, Plane, Text, useTexture } from '@react-three/drei';
+import { useFrame } from '@react-three/fiber';
+import { Box, Plane, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { getAssetUrl } from '../api/client';
 
@@ -12,34 +12,65 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   const [textureErrors, setTextureErrors] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Memoize card dimensions to prevent unnecessary recalculations
+  // Memoize card dimensions with fallback support
   const cardDimensions = useMemo(() => {
-    if (!cardData?.dimensions) {
+    // Support multiple dimension field names for compatibility
+    const dimensions = cardData?.dimensions || 
+                      cardData?.cardDimensions || 
+                      cardData?.cardData?.dimensions ||
+                      cardData?.cardData?.cardDimensions;
+    
+    if (!dimensions) {
+      console.warn('⚠️ No dimensions found, using defaults');
       return { width: 4, height: 2.5, thickness: 0.1 };
     }
     
-    const { width, height, thickness } = cardData.dimensions;
+    const { width, height, thickness } = dimensions;
     return {
-      width: width / 20,   // Convert mm to Three.js units
-      height: height / 20,
-      thickness: thickness / 10
+      width: (width || 89) / 20,     // Convert mm to Three.js units
+      height: (height || 51) / 20,   // Default to business card size
+      thickness: (thickness || 0.35) / 10
     };
   }, [cardData]);
 
-  // Load textures from EC2 microservice
+  // Extract jobId with multiple fallback paths
+  const jobId = useMemo(() => {
+    return cardData?.jobId || 
+           cardData?.id || 
+           cardData?.parseResult?.jobId ||
+           cardData?.uploadResult?.jobId ||
+           null;
+  }, [cardData]);
+
+  // Extract maps with multiple fallback paths
+  const maps = useMemo(() => {
+    return cardData?.maps || 
+           cardData?.parseResult?.maps ||
+           cardData?.cardData?.maps ||
+           {};
+  }, [cardData]);
+
+  // Load textures from EC2 microservice with comprehensive error handling
   useEffect(() => {
-    if (!cardData?.maps || !cardData?.jobId) {
-      console.log('📊 No texture maps available for loading');
+    if (!maps || Object.keys(maps).length === 0) {
+      console.log('📊 No texture maps available');
       setIsLoading(false);
+      return;
+    }
+
+    if (!jobId) {
+      console.error('❌ No jobId available for texture loading');
+      setIsLoading(false);
+      setTextureErrors(['No jobId available for loading textures']);
       return;
     }
     
     let isMounted = true;
     
     const loadTextures = async () => {
-      console.log('🖼️ Loading high-resolution textures from EC2...');
-      console.log('🆔 Job ID:', cardData.jobId);
-      console.log('🗂️ Available maps:', Object.keys(cardData.maps));
+      console.log('🖼️ Loading textures from EC2 parser service...');
+      console.log('🆔 Job ID:', jobId);
+      console.log('🗂️ Available maps:', Object.keys(maps));
       
       const textureLoader = new THREE.TextureLoader();
       const loadedTextures = {};
@@ -48,12 +79,18 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       let loadedCount = 0;
 
       // Count total textures to load
-      for (const [mapType, mapData] of Object.entries(cardData.maps)) {
+      for (const [mapType, mapData] of Object.entries(maps)) {
         if (typeof mapData === 'string') {
           totalTextures++;
         } else if (Array.isArray(mapData)) {
           totalTextures += mapData.length;
         }
+      }
+
+      if (totalTextures === 0) {
+        console.log('📊 No textures to load');
+        setIsLoading(false);
+        return;
       }
 
       console.log(`📈 Loading ${totalTextures} texture maps...`);
@@ -68,7 +105,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
 
       try {
         // Load each texture map type
-        for (const [mapType, mapData] of Object.entries(cardData.maps)) {
+        for (const [mapType, mapData] of Object.entries(maps)) {
           if (!isMounted) break;
           
           if (typeof mapData === 'string') {
@@ -76,38 +113,14 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             console.log(`🔍 Loading ${mapType}: ${mapData}`);
             
             try {
-              const textureUrl = getAssetUrl(cardData.jobId, mapData);
+              const textureUrl = getAssetUrl(jobId, mapData);
               console.log(`🌐 Texture URL: ${textureUrl}`);
               
-              const texture = await new Promise((resolve, reject) => {
-                const img = new Image();
-                img.crossOrigin = 'anonymous';
-                
-                img.onload = () => {
-                  const texture = textureLoader.load(
-                    textureUrl,
-                    (loadedTexture) => {
-                      // Configure texture for optimal quality
-                      loadedTexture.wrapS = THREE.ClampToEdgeWrapping;
-                      loadedTexture.wrapT = THREE.ClampToEdgeWrapping;
-                      loadedTexture.flipY = false;
-                      loadedTexture.minFilter = THREE.LinearMipmapLinearFilter;
-                      loadedTexture.magFilter = THREE.LinearFilter;
-                      loadedTexture.generateMipmaps = true;
-                      resolve(loadedTexture);
-                    },
-                    undefined,
-                    reject
-                  );
-                };
-                
-                img.onerror = reject;
-                img.src = textureUrl;
-              });
+              const texture = await loadSingleTexture(textureLoader, textureUrl);
               
-              if (isMounted) {
+              if (isMounted && texture) {
                 loadedTextures[mapType] = texture;
-                console.log(`✅ Loaded ${mapType} texture (${texture.image.width}x${texture.image.height})`);
+                console.log(`✅ Loaded ${mapType} texture`);
               }
               
             } catch (error) {
@@ -126,45 +139,16 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               if (!isMounted) break;
               
               const item = mapData[i];
-              const maskFile = item.mask || item.file || item;
+              const maskFile = extractMaskFileName(item);
               
-              if (typeof maskFile === 'string') {
+              if (maskFile) {
                 try {
-                  const textureUrl = getAssetUrl(cardData.jobId, maskFile);
+                  const textureUrl = getAssetUrl(jobId, maskFile);
                   console.log(`🎨 Loading effect texture: ${maskFile}`);
                   
-                  const texture = await new Promise((resolve, reject) => {
-                    const img = new Image();
-                    img.crossOrigin = 'anonymous';
-                    
-                    img.onload = () => {
-                      const texture = textureLoader.load(
-                        textureUrl,
-                        (loadedTexture) => {
-                          // Configure for effect masks
-                          loadedTexture.wrapS = THREE.ClampToEdgeWrapping;
-                          loadedTexture.wrapT = THREE.ClampToEdgeWrapping;
-                          loadedTexture.flipY = false;
-                          loadedTexture.minFilter = THREE.LinearFilter;
-                          loadedTexture.magFilter = THREE.LinearFilter;
-                          
-                          // For alpha masks, ensure proper format
-                          if (maskFile.includes('mask') || maskFile.includes('alpha')) {
-                            loadedTexture.format = THREE.RGBAFormat;
-                          }
-                          
-                          resolve(loadedTexture);
-                        },
-                        undefined,
-                        reject
-                      );
-                    };
-                    
-                    img.onerror = reject;
-                    img.src = textureUrl;
-                  });
+                  const texture = await loadSingleTexture(textureLoader, textureUrl);
                   
-                  if (isMounted) {
+                  if (isMounted && texture) {
                     loadedTextures[mapType].push({ 
                       ...item, 
                       texture,
@@ -193,7 +177,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             totalMaps: Object.keys(loadedTextures).length,
             totalTextures: loadedCount,
             errors: errors.length,
-            jobId: cardData.jobId
+            jobId: jobId
           });
         }
         
@@ -212,12 +196,67 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     return () => {
       isMounted = false;
     };
-  }, [cardData]);
+  }, [maps, jobId]);
+
+  // Helper function to load a single texture with proper configuration
+  const loadSingleTexture = async (textureLoader, textureUrl) => {
+    return new Promise((resolve, reject) => {
+      // Pre-check if URL is accessible
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      
+      img.onload = () => {
+        const texture = textureLoader.load(
+          textureUrl,
+          (loadedTexture) => {
+            // Configure texture for optimal quality
+            loadedTexture.wrapS = THREE.ClampToEdgeWrapping;
+            loadedTexture.wrapT = THREE.ClampToEdgeWrapping;
+            loadedTexture.flipY = false;
+            loadedTexture.minFilter = THREE.LinearFilter;
+            loadedTexture.magFilter = THREE.LinearFilter;
+            loadedTexture.generateMipmaps = false; // Disable for better performance
+            resolve(loadedTexture);
+          },
+          undefined,
+          (error) => {
+            console.error('Three.js texture loading error:', error);
+            reject(error);
+          }
+        );
+      };
+      
+      img.onerror = (error) => {
+        console.error('Image loading error:', error);
+        reject(new Error(`Failed to load image: ${textureUrl}`));
+      };
+      
+      img.src = textureUrl;
+    });
+  };
+
+  // Helper function to extract mask file name from various formats
+  const extractMaskFileName = (item) => {
+    if (typeof item === 'string') {
+      return item;
+    }
+    
+    if (typeof item === 'object' && item !== null) {
+      return item.mask || 
+             item.maskFile || 
+             item.file || 
+             item.texture || 
+             item.asset ||
+             null;
+    }
+    
+    return null;
+  };
 
   // Auto rotation animation
   useFrame((state, delta) => {
     if (autoRotate && cardRef.current) {
-      cardRef.current.rotation.y += delta * 0.3; // Slightly faster rotation
+      cardRef.current.rotation.y += delta * 0.3;
     }
   });
 
@@ -257,8 +296,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             <EffectLayer
               key={`foil-${index}`}
               effectData={foilLayer}
-              cardDimensions={cardData.dimensions}
-              displayDimensions={cardDimensions}
+              cardDimensions={cardDimensions}
               zIndex={0.001 + index * 0.0002}
               materialType="foil"
             />
@@ -269,8 +307,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             <EffectLayer
               key={`uv-${index}`}
               effectData={uvLayer}
-              cardDimensions={cardData.dimensions}
-              displayDimensions={cardDimensions}
+              cardDimensions={cardDimensions}
               zIndex={0.002 + index * 0.0002}
               materialType="spotUV"
             />
@@ -281,21 +318,21 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             <EffectLayer
               key={`emboss-${index}`}
               effectData={embossLayer}
-              cardDimensions={cardData.dimensions}
-              displayDimensions={cardDimensions}
+              cardDimensions={cardDimensions}
               zIndex={0.003 + index * 0.0002}
               materialType="emboss"
             />
           ))}
-        </>
-      )}
 
-      {/* Die-cut Edge Indicator */}
-      {textures.diecut && (
-        <DiecutIndicator 
-          diecutData={textures.diecut}
-          cardDimensions={cardDimensions}
-        />
+          {/* Die-cut Effects */}
+          {textures.diecut && textures.diecut.map((diecutLayer, index) => (
+            <DiecutIndicator
+              key={`diecut-${index}`}
+              diecutData={diecutLayer}
+              cardDimensions={cardDimensions}
+            />
+          ))}
+        </>
       )}
 
       {/* Debug info (only in development) */}
@@ -313,7 +350,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   );
 }
 
-// Base card mesh component
+// Base card mesh component with enhanced material handling
 function BaseCardMesh({ dimensions, albedoTexture, backTexture }) {
   const { width, height, thickness } = dimensions;
   
@@ -329,33 +366,23 @@ function BaseCardMesh({ dimensions, albedoTexture, backTexture }) {
 
   const backMaterial = useMemo(() => {
     return new THREE.MeshStandardMaterial({
-      map: backTexture || null,
-      color: backTexture ? '#ffffff' : '#f0f0f0',
-      roughness: backTexture ? 0.8 : 0.9,
+      map: backTexture || albedoTexture || null,
+      color: (backTexture || albedoTexture) ? '#ffffff' : '#f0f0f0',
+      roughness: (backTexture || albedoTexture) ? 0.8 : 0.9,
       metalness: 0.0,
       side: THREE.BackSide
     });
-  }, [backTexture]);
+  }, [backTexture, albedoTexture]);
 
   return (
-    <>
-      {/* Front face */}
-      <Box args={[width, height, thickness]} position={[0, 0, 0]}>
-        <primitive object={frontMaterial} attach="material" />
-      </Box>
-      
-      {/* Back face (if different texture) */}
-      {backTexture && (
-        <Box args={[width, height, thickness]} position={[0, 0, -0.001]}>
-          <primitive object={backMaterial} attach="material" />
-        </Box>
-      )}
-    </>
+    <Box args={[width, height, thickness]} position={[0, 0, 0]}>
+      <primitive object={frontMaterial} attach="material" />
+    </Box>
   );
 }
 
-// Enhanced effect layer with accurate coordinate mapping
-function EffectLayer({ effectData, cardDimensions, displayDimensions, zIndex, materialType }) {
+// Enhanced effect layer with proper coordinate handling
+function EffectLayer({ effectData, cardDimensions, zIndex, materialType }) {
   const { texture, bounds, color, mode, side } = effectData;
   
   if (!texture || !bounds) {
@@ -363,18 +390,14 @@ function EffectLayer({ effectData, cardDimensions, displayDimensions, zIndex, ma
     return null;
   }
   
-  // Convert bounds from mm to Three.js coordinates with proper scaling
-  const scaleX = displayDimensions.width / cardDimensions.width;
-  const scaleY = displayDimensions.height / cardDimensions.height;
+  // Use the display dimensions (already converted to Three.js units)
+  const effectWidth = (bounds.width / 89) * cardDimensions.width;
+  const effectHeight = (bounds.height / 51) * cardDimensions.height;
   
-  const effectWidth = bounds.width * scaleX;
-  const effectHeight = bounds.height * scaleY;
-  
-  // Position calculation with proper coordinate system conversion
-  // EC2 parser provides bottom-left origin coordinates
-  const effectX = ((bounds.x + bounds.width / 2) - (cardDimensions.width / 2)) * scaleX;
-  const effectY = ((bounds.y + bounds.height / 2) - (cardDimensions.height / 2)) * scaleY;
-  const effectZ = displayDimensions.thickness / 2 + zIndex;
+  // Position calculation (bounds are in mm, convert to Three.js coordinates)
+  const effectX = ((bounds.x + bounds.width / 2 - 44.5) / 89) * cardDimensions.width;
+  const effectY = -((bounds.y + bounds.height / 2 - 25.5) / 51) * cardDimensions.height;
+  const effectZ = cardDimensions.thickness / 2 + zIndex;
 
   // Create optimized material based on effect type
   const material = useMemo(() => {
@@ -393,10 +416,11 @@ function EffectLayer({ effectData, cardDimensions, displayDimensions, zIndex, ma
           silver: new THREE.Color('#C0C0C0'),
           copper: new THREE.Color('#B87333'),
           rose_gold: new THREE.Color('#E8B4B8'),
-          holographic: new THREE.Color('#FF69B4')
+          holographic: new THREE.Color('#FF69B4'),
+          default: new THREE.Color('#FFD700')
         };
         
-        const foilColor = foilColors[color] || foilColors.gold;
+        const foilColor = foilColors[color] || foilColors.default;
         
         return new THREE.MeshStandardMaterial({
           ...baseProps,
@@ -405,7 +429,7 @@ function EffectLayer({ effectData, cardDimensions, displayDimensions, zIndex, ma
           roughness: 0.05,
           envMapIntensity: 2.5,
           emissive: foilColor,
-          emissiveIntensity: 0.15
+          emissiveIntensity: 0.1
         });
         
       case 'spotUV':
@@ -418,7 +442,7 @@ function EffectLayer({ effectData, cardDimensions, displayDimensions, zIndex, ma
           clearcoatRoughness: 0.0,
           envMapIntensity: 2.0,
           transparent: true,
-          opacity: 0.8
+          opacity: 0.6
         });
         
       case 'emboss':
@@ -431,23 +455,17 @@ function EffectLayer({ effectData, cardDimensions, displayDimensions, zIndex, ma
           normalMap: texture,
           normalScale: new THREE.Vector2(embossHeight, embossHeight),
           displacementMap: texture,
-          displacementScale: 0.005 * Math.abs(embossHeight)
+          displacementScale: 0.002 * Math.abs(embossHeight)
         });
         
       default:
-        console.warn(`Unknown effect type: ${materialType}`);
         return new THREE.MeshStandardMaterial({
           ...baseProps,
-          color: new THREE.Color('#ff0000')
+          color: new THREE.Color('#667eea'),
+          opacity: 0.7
         });
     }
   }, [texture, materialType, color, mode, side]);
-
-  console.log(`🎨 Rendering ${materialType} effect:`, {
-    bounds,
-    position: [effectX, effectY, effectZ],
-    size: [effectWidth, effectHeight]
-  });
 
   return (
     <Plane args={[effectWidth, effectHeight]} position={[effectX, effectY, effectZ]}>
@@ -456,7 +474,7 @@ function EffectLayer({ effectData, cardDimensions, displayDimensions, zIndex, ma
   );
 }
 
-// Die-cut edge indicator
+// Die-cut edge indicator component
 function DiecutIndicator({ diecutData, cardDimensions }) {
   if (!diecutData) return null;
 
@@ -486,7 +504,7 @@ function DiecutIndicator({ diecutData, cardDimensions }) {
   );
 }
 
-// Loading placeholder component
+// Loading placeholder component with enhanced feedback
 function CardModelPlaceholder({ 
   message = "Loading...", 
   cardDimensions = { width: 4, height: 2.5, thickness: 0.1 },
@@ -497,7 +515,7 @@ function CardModelPlaceholder({
 
   // Gentle pulsing animation for loading
   useFrame((state) => {
-    if (meshRef.current) {
+    if (meshRef.current && meshRef.current.material) {
       meshRef.current.material.opacity = 0.5 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
     }
   });
@@ -531,7 +549,7 @@ function CardModelPlaceholder({
           anchorX="center"
           anchorY="middle"
         >
-          {Math.round(progress)}% • High-resolution textures loading...
+          {Math.round(progress)}% • Loading from EC2 server...
         </Text>
       )}
     </group>
