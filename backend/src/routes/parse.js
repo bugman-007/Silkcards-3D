@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
 const router = express.Router();
 
 // Parser service configuration - PRODUCTION SETTINGS
-const PARSER_SERVICE_URL = process.env.PARSER_SERVICE_URL || 'http://13.223.206.6:8000';
+const PARSER_SERVICE_URL = process.env.PARSER_SERVICE_URL || 'http://44.203.155.170:8000';
 const PARSER_API_KEY = process.env.PARSER_API_KEY || 'sk_parser_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2';
 const PARSER_HMAC_SECRET = process.env.PARSER_HMAC_SECRET || 'hmac_secret_9876543210abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz';
 
