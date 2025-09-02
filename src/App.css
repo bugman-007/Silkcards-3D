@@ -316,36 +316,77 @@
   .App {
     padding: 10px;
   }
-  
+
   .app-header h1 {
     font-size: 2rem;
   }
-  
+
   .preview-nav {
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .nav-btn.reset-btn {
     margin-left: 0;
     margin-top: 10px;
   }
-  
+
   .preview-actions {
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .analysis-details {
     grid-template-columns: 1fr;
   }
-  
+
   .upload-area,
   .preview-area {
     padding: 20px;
   }
-  
+
   .analysis-card {
     padding: 20px;
   }
+}
+
+/* Additional styles for new effect badges - Add to existing App.css */
+
+/* New effect badge styles for actual parser output */
+.effect-badge.parsing {
+  background: linear-gradient(45deg, #28a745, #20c997);
+}
+
+.effect-badge.method {
+  background: linear-gradient(45deg, #17a2b8, #6f42c1);
+}
+
+.effect-badge.processing {
+  background: linear-gradient(45deg, #6c757d, #495057);
+}
+
+.effect-badge.texture {
+  background: linear-gradient(45deg, #007bff, #0056b3);
+}
+
+.effect-badge.albedo {
+  background: linear-gradient(45deg, #f8f9fa, #e9ecef);
+  color: #333;
+}
+
+.effect-badge.albedo_front,
+.effect-badge.albedo_back {
+  background: linear-gradient(45deg, #6c757d, #495057);
+}
+
+/* Update layer type styles for actual parser output */
+.layer-type.texture {
+  background: #cce5ff;
+  color: #0066cc;
+}
+
+.effect-type.albedo_front,
+.effect-type.albedo_back {
+  background: #f8f9fa;
+  color: #495057;
 }

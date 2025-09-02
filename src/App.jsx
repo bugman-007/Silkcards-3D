@@ -1,4 +1,4 @@
-// src/App.jsx - UPDATED WITH SHARE MODAL
+// src/App.jsx - FIXED VERSION FOR ACTUAL PARSER OUTPUT
 import { useState } from 'react'
 import './App.css'
 import FileUploader from './components/FileUploader'
@@ -26,6 +26,31 @@ function App() {
   const handleGenerateShare = () => {
     setShowShareModal(true);
   };
+
+  // Safely extract data for analysis view
+  const getAnalysisData = () => {
+    if (!uploadedData) return null;
+
+    const parseResult = uploadedData.parseResult || {};
+    const file = uploadedData.file || {};
+    
+    return {
+      file: {
+        name: file.name || 'Unknown file',
+        size: file.size || 0
+      },
+      parseResult: {
+        dimensions: parseResult.dimensions || { width: 0, height: 0, thickness: 0.35 },
+        metadata: parseResult.metadata || {},
+        maps: parseResult.maps || {},
+        materials: parseResult.materials || {},
+        parsing: parseResult.parsing || { confidence: 0, method: 'Unknown' },
+        fileType: file.name?.endsWith('.ai') ? 'ai' : 'pdf'
+      }
+    };
+  };
+
+  const analysisData = getAnalysisData();
 
   return (
     <div className="App">
@@ -70,7 +95,7 @@ function App() {
             {!showAnalysis ? (
               // 3D Preview View
               <div className="preview-content">
-                <ThreeViewer cardData={uploadedData.parseResult} />
+                <ThreeViewer cardData={uploadedData} />
                 
                 <div className="preview-actions">
                   <button 
@@ -85,58 +110,62 @@ function App() {
                 </div>
               </div>
             ) : (
-              // Analysis View
+              // Analysis View - Fixed to handle actual parser structure
               <div className="analysis-content">
                 <div className="analysis-card">
                   <h3>File Analysis Results</h3>
                   <div className="analysis-details">
                     <div className="detail-group">
                       <h4>📁 File Information</h4>
-                      <p><strong>Name:</strong> {uploadedData.file.name}</p>
-                      <p><strong>Size:</strong> {(uploadedData.file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                      <p><strong>Type:</strong> {uploadedData.parseResult.fileType.toUpperCase()}</p>
-                      <p><strong>File ID:</strong> {uploadedData.uploadResult.data.fileId}</p>
+                      <p><strong>Name:</strong> {analysisData.file.name}</p>
+                      <p><strong>Size:</strong> {(analysisData.file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                      <p><strong>Type:</strong> {analysisData.parseResult.fileType.toUpperCase()}</p>
+                      <p><strong>Job ID:</strong> {uploadedData.jobId || 'N/A'}</p>
                     </div>
 
                     <div className="detail-group">
                       <h4>📐 Card Specifications</h4>
-                      <p><strong>Dimensions:</strong> {uploadedData.parseResult.cardDimensions.width} × {uploadedData.parseResult.cardDimensions.height} mm</p>
-                      <p><strong>Thickness:</strong> {uploadedData.parseResult.cardDimensions.thickness} mm</p>
-                      <p><strong>Color Mode:</strong> {uploadedData.parseResult.metadata.colorMode}</p>
-                      <p><strong>Resolution:</strong> {uploadedData.parseResult.metadata.resolution} DPI</p>
+                      <p><strong>Dimensions:</strong> {Math.round(analysisData.parseResult.dimensions.width)} × {Math.round(analysisData.parseResult.dimensions.height)} units</p>
+                      <p><strong>Thickness:</strong> {analysisData.parseResult.dimensions.thickness} mm</p>
+                      <p><strong>Material:</strong> {analysisData.parseResult.materials.paper?.preset || 'Standard'}</p>
+                      <p><strong>Resolution:</strong> {uploadedData.parseResult?.coords?.dpi || 600} DPI</p>
                     </div>
 
                     <div className="detail-group">
-                      <h4>🎨 Layers Found</h4>
-                      <p><strong>Total Layers:</strong> {uploadedData.parseResult.layers.length}</p>
+                      <h4>🎨 Texture Maps Found</h4>
+                      <p><strong>Total Maps:</strong> {Object.keys(analysisData.parseResult.maps).length}</p>
                       <div className="layers-list">
-                        {uploadedData.parseResult.layers.map((layer, index) => (
-                          <div key={layer.id} className="layer-item">
-                            <span className={`layer-type ${layer.type}`}>
-                              {layer.type}
+                        {Object.entries(analysisData.parseResult.maps).map(([mapType, mapData], index) => (
+                          <div key={index} className="layer-item">
+                            <span className={`layer-type ${mapType.includes('albedo') ? 'background' : 'effect'}`}>
+                              {mapType.includes('albedo') ? 'texture' : 'effect'}
                             </span>
-                            <span className="layer-name">{layer.name}</span>
-                            {layer.effectType && (
-                              <span className={`effect-type ${layer.effectType}`}>
-                                {layer.effectType} {layer.effectSubtype && `(${layer.effectSubtype})`}
-                              </span>
-                            )}
+                            <span className="layer-name">{mapType}</span>
+                            <span className={`effect-type ${mapType}`}>
+                              {Array.isArray(mapData) ? `${mapData.length} items` : '1 item'}
+                            </span>
                           </div>
                         ))}
                       </div>
                     </div>
 
                     <div className="detail-group">
-                      <h4>✨ Effects Summary</h4>
-                      {Object.entries(uploadedData.parseResult.effects).map(([effect, items]) => (
-                        items.length > 0 && (
-                          <div key={effect} className="effect-summary">
-                            <span className={`effect-badge ${effect}`}>
-                              {effect}: {items.length} instance{items.length !== 1 ? 's' : ''}
-                            </span>
-                          </div>
-                        )
-                      ))}
+                      <h4>✨ Processing Results</h4>
+                      <div className="effect-summary">
+                        <span className="effect-badge parsing">
+                          Confidence: {Math.round((analysisData.parseResult.parsing.confidence || 0) * 100)}%
+                        </span>
+                      </div>
+                      <div className="effect-summary">
+                        <span className="effect-badge method">
+                          Method: {analysisData.parseResult.parsing.method || 'OCG Extraction'}
+                        </span>
+                      </div>
+                      <div className="effect-summary">
+                        <span className="effect-badge processing">
+                          Processing: {uploadedData.processingTime ? `${(uploadedData.processingTime / 1000).toFixed(1)}s` : 'N/A'}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -148,7 +177,7 @@ function App() {
         {/* Share Modal */}
         {showShareModal && (
           <ShareModal 
-            cardData={uploadedData.parseResult}
+            cardData={uploadedData}
             onClose={() => setShowShareModal(false)}
           />
         )}
