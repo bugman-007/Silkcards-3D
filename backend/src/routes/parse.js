@@ -201,6 +201,10 @@ router.post('/:fileId', async (req, res) => {
     } else if (error.response?.status === 429) {
       errorMessage = 'Parser service rate limit exceeded';
       statusCode = 429;
+    } else if (error.response?.status === 422) {
+      errorMessage = error.response.data;
+      // errorMessage = error.response.data.error.details.checks;
+      statusCode = 422;
     }
     
     res.status(statusCode).json({ 
