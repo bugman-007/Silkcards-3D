@@ -14,35 +14,6 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   const [textureErrors, setTextureErrors] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Memoize card dimensions with ACTUAL parser output structure
-  const cardDimensions = useMemo(() => {
-    // Handle the ACTUAL structure from your parser
-    const dimensions =
-      cardData?.dimensions ||
-      cardData?.parseResult?.dimensions ||
-      cardData?.cardDimensions;
-
-    if (!dimensions) {
-      console.warn("⚠️ No dimensions found, using defaults");
-      return { width: 4, height: 2.5, thickness: 0.1 };
-    }
-
-    const { width, height, thickness } = dimensions;
-
-    // Convert from parser units (mm) to Three.js units
-    // Your parser gives large values like 987.83 x 740.28, which seem to be pixels
-    // Let's normalize to business card proportions
-    const aspectRatio = width / height;
-    const cardWidth = aspectRatio > 1.5 ? 4 : 3; // Wider cards get more width
-    const cardHeight = cardWidth / aspectRatio;
-
-    return {
-      width: cardWidth,
-      height: cardHeight,
-      thickness: (thickness || 0.35) / 10, // Convert mm to Three.js units
-    };
-  }, [cardData]);
-
   // Extract jobId from ACTUAL response structure
   const jobId = useMemo(() => {
     return (
@@ -50,8 +21,31 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       cardData?.parseResult?.jobId ||
       cardData?.uploadResult?.jobId ||
       cardData?.id ||
+      cardData?.job_id || // <-- accept exporter field
       null
     );
+  }, [cardData]);
+
+  // Memoize card dimensions with ACTUAL parser output structure
+  const cardDimensions = useMemo(() => {
+    const dims =
+      cardData?.dimensions || cardData?.parseResult?.dimensions || null;
+
+    const ab =
+      cardData?.original?.doc?.artboards?.[0]?.bounds ||
+      cardData?.doc?.artboards?.[0]?.bounds ||
+      null;
+
+    const widthMm = dims?.width ?? ab?.w ?? 90;
+    const heightMm = dims?.height ?? ab?.h ?? 54;
+    const thicknessMm = cardData?.thickness ?? 0.35;
+
+    return {
+      // convert mm -> meters for Three.js
+      width: widthMm / 1000,
+      height: heightMm / 1000,
+      thickness: thicknessMm / 1000,
+    };
   }, [cardData]);
 
   // Extract maps from ACTUAL response structure

@@ -13,11 +13,11 @@ const getApiUrl = () => {
     const hostname = window.location.hostname;
     
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return 'http://localhost:3001/api';
+      return 'http://44.203.155.170:8000';
     }
   }
   
-  return 'https://revolve360-backend.onrender.com/api';
+  return 'http://44.203.155.170:8000';
 };
 
 const API_BASE_URL = getApiUrl();
