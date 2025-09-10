@@ -1,5 +1,5 @@
-// src/components/FileUploader.jsx - COMPLETE FIXED VERSION
-import { useState, useRef, useEffect, useCallback } from "react";
+// src/components/FileUploader.jsx - FIXED VERSION FOR ACTUAL PARSER OUTPUT
+import { useState, useRef, useCallback } from "react";
 import { processFile } from "../api/client";
 import { adaptParserJsonToViewer } from "../api/adapter";
 import "./FileUploader.css";
@@ -131,15 +131,13 @@ export default function FileUploader({ onFileUpload }) {
               break;
             case "parsing":
               if (progressUpdate.progress < 30) {
-                setCurrentStep("Loading and validating PDF document...");
+                setCurrentStep("Loading and validating document...");
               } else if (progressUpdate.progress < 50) {
-                setCurrentStep(
-                  "Extracting OCG layers from Illustrator file..."
-                );
+                setCurrentStep("Extracting OCG layers from file...");
               } else if (progressUpdate.progress < 70) {
-                setCurrentStep("Rendering high-resolution texture maps...");
+                setCurrentStep("Processing vector paths and bounds...");
               } else if (progressUpdate.progress < 90) {
-                setCurrentStep("Generating 3D material definitions...");
+                setCurrentStep("Generating layer definitions...");
               } else {
                 setCurrentStep("Finalizing parse results...");
               }
@@ -160,25 +158,28 @@ export default function FileUploader({ onFileUpload }) {
       setUploadStatus("success");
       setCurrentStep("Processing completed successfully!");
       setProgress(100);
-      setProcessingDetails(result.parseResult);
 
       const totalTime = Date.now() - startTime;
 
       console.log(
         `✅ Complete workflow finished in ${(totalTime / 1000).toFixed(2)}s`
       );
-      console.log(
-        `🎯 Parse confidence: ${(
-          result.parseResult.parsing?.confidence * 100 || 0
-        ).toFixed(1)}%`
-      );
 
-      // Call parent component callback
+      // FIXED: Use the adapter to transform the raw parser JSON
+      console.log("🔄 Adapting parser result for 3D viewer...");
+      const adapted = adaptParserJsonToViewer(result.parseResult);
+      
+      // Add processing metadata
+      adapted.processingTime = totalTime;
+      adapted.file = selectedFile;
+
+      console.log("✅ Adapted data structure:", adapted);
+      
+      setProcessingDetails(adapted.parseResult);
+
+      // Call parent component callback with adapted data
       if (onFileUpload) {
-        // result is the object returned by processFile()
-        // result.parseResult is the raw parser JSON from Windows
-        const adapted = adaptParserJsonToViewer(result.parseResult);
-        onFileUpload({ ...adapted, processingTime: totalTime });
+        onFileUpload(adapted);
       }
     } catch (error) {
       console.error("❌ Upload/Parse workflow failed:", error);
@@ -297,11 +298,11 @@ export default function FileUploader({ onFileUpload }) {
             </div>
             <div className="feature-item">
               <span className="feature-icon">🖼️</span>
-              <span>600 DPI texture maps for perfect 3D rendering</span>
+              <span>Vector-based 3D rendering for perfect visualization</span>
             </div>
             <div className="feature-item">
               <span className="feature-icon">⚡</span>
-              <span>Real-time processing on dedicated EC2 server</span>
+              <span>Real-time processing with accurate bounds detection</span>
             </div>
           </div>
 
@@ -398,7 +399,7 @@ export default function FileUploader({ onFileUpload }) {
                     }`}
                   >
                     <span className="step-icon">🖼️</span>
-                    <span>Generate 3D</span>
+                    <span>Process Layers</span>
                   </div>
                   <div
                     className={`step ${
@@ -416,8 +417,7 @@ export default function FileUploader({ onFileUpload }) {
 
                 <div className="technical-info">
                   <small>
-                    💡 Advanced OCG layer extraction + 600 DPI texture
-                    generation
+                    💡 OCG layer extraction with vector bounds processing
                   </small>
                   {retryCount > 0 && (
                     <small>
@@ -443,25 +443,20 @@ export default function FileUploader({ onFileUpload }) {
                     <div className="stat-item">
                       <span className="stat-label">Parse Confidence</span>
                       <span className="stat-value confidence">
-                        {Math.round(processingDetails.parsing.confidence * 100)}
-                        %
+                        {Math.round(processingDetails.parsing.confidence * 100)}%
                       </span>
                     </div>
                     <div className="stat-item">
-                      <span className="stat-label">Effects Found</span>
+                      <span className="stat-label">Items Found</span>
                       <span className="stat-value">
-                        {processingDetails.maps
-                          ? Object.keys(processingDetails.maps).length
-                          : 0}
+                        {processingDetails.metadata?.totalItems || 0}
                       </span>
                     </div>
                     <div className="stat-item">
                       <span className="stat-label">Processing Time</span>
                       <span className="stat-value">
-                        {processingDetails.parsing.parseTime
-                          ? `${(
-                              processingDetails.parsing.parseTime / 1000
-                            ).toFixed(1)}s`
+                        {processingDetails.metadata?.processingTime
+                          ? `${(processingDetails.metadata.processingTime / 1000).toFixed(1)}s`
                           : "N/A"}
                       </span>
                     </div>
@@ -472,24 +467,6 @@ export default function FileUploader({ onFileUpload }) {
                       </span>
                     </div>
                   </div>
-
-                  {processingDetails.maps && (
-                    <div className="effects-preview">
-                      <h5>🎨 Detected Effects:</h5>
-                      <div className="effects-list">
-                        {Object.entries(processingDetails.maps).map(
-                          ([effect, data]) => (
-                            <span
-                              key={effect}
-                              className={`effect-badge ${effect}`}
-                            >
-                              {effect}: {Array.isArray(data) ? data.length : 1}
-                            </span>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -532,9 +509,7 @@ export default function FileUploader({ onFileUpload }) {
                     <li>Ensure your file is a valid AI or PDF document</li>
                     <li>Check that the file size is under 100MB</li>
                     <li>Verify your internet connection is stable</li>
-                    <li>
-                      Try again in a few moments - the EC2 server might be busy
-                    </li>
+                    <li>Try again in a few moments - the server might be busy</li>
                   </ul>
                 </div>
               </div>

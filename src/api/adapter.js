@@ -1,122 +1,110 @@
-// src/api/adapter.js
+// Replace the entire content with:
 export function adaptParserJsonToViewer(data) {
   if (!data || typeof data !== "object") {
     throw new Error("adaptParserJsonToViewer: invalid input");
   }
 
-  // Size from artboard 0 bounds (mm) – this exists in your parser JSON
-  const ab = data?.doc?.artboards?.[0]?.bounds || {};
-  const widthMm = typeof ab.w === "number" ? ab.w : null;
-  const heightMm = typeof ab.h === "number" ? ab.h : null;
+  // Extract dimensions from artboard bounds (in mm)
+  const artboard = data?.doc?.artboards?.[0]?.bounds;
+  const cardDimensions = {
+    width: artboard?.w || 89,
+    height: artboard?.h || 51,
+    thickness: 0.35, // Standard thickness in mm
+    units: "mm",
+  };
 
-  // job id (your exporter returns job_id)
-  const jobId = data?.job_id || data?.jobId || data?.id || null;
+  // Extract job ID
+  const jobId = data?.job_id || data?._meta?.job_id || null;
 
-  const dims = { width: widthMm ?? 90, height: heightMm ?? 54, units: "mm" };
+  // Process items to create effect layers
+  const items = Array.isArray(data.items) ? data.items : [];
 
-  // Minimal shape the viewer understands today
+  // Group items by finish type and side
+  const effectLayers = {
+    foil: [],
+    spot_uv: [],
+    emboss: [],
+    print: [],
+    die_cut: [],
+  };
+
+  // Process each item
+  items.forEach((item, index) => {
+    const layerPath = item.layerPath || [];
+    const finish = item.finish || "print";
+    const itemData = {
+      id: `item_${index}`,
+      name: item.name || `Layer ${index}`,
+      bounds: item.bounds || null,
+      layerPath: layerPath,
+      finish: finish,
+      side: layerPath[0]?.toLowerCase().includes("front")
+        ? "front"
+        : layerPath[0]?.toLowerCase().includes("back")
+        ? "back"
+        : "front",
+    };
+
+    // Categorize by finish type
+    if (finish === "print") {
+      effectLayers.print.push(itemData);
+    } else {
+      // Extract finish type from layer path
+      const layerName = layerPath.join("_").toLowerCase();
+      if (layerName.includes("foil")) {
+        effectLayers.foil.push({
+          ...itemData,
+          color: extractFoilColor(layerName),
+        });
+      } else if (layerName.includes("uv") || layerName.includes("spot")) {
+        effectLayers.spot_uv.push(itemData);
+      } else if (layerName.includes("emboss") || layerName.includes("deboss")) {
+        effectLayers.emboss.push({
+          ...itemData,
+          mode: layerName.includes("deboss") ? "deboss" : "emboss",
+        });
+      }
+    }
+  });
+
+  // Create the expected structure
   const adapted = {
     jobId,
     id: jobId,
-    dimensions: dims,
-    maps: {}, // no textures yet
-    parseResult: { jobId, dimensions: dims, maps: {} }, // keep legacy nesting happy
-    original: data, // keep the raw payload for debugging / overlays
+    dimensions: cardDimensions,
+
+    // For compatibility with existing code
+    parseResult: {
+      jobId,
+      dimensions: cardDimensions,
+      maps: {}, // No texture maps from this parser
+      parsing: {
+        method: "OCG Layer Extraction",
+        confidence: items.length > 0 ? 0.95 : 0.5,
+      },
+      metadata: {
+        originalFile: data?._meta?.input_file || "Unknown file",
+        totalItems: items.length,
+        processingTime: data?._meta?.elapsed_sec * 1000 || 0,
+      },
+    },
+
+    // Processed layer data for 3D rendering
+    layers: effectLayers,
+
+    // Keep original for debugging
+    original: data,
   };
 
-  // Pre-group effects (front/back + finish) – safe to carry for future overlays
-  const items = Array.isArray(data.items) ? data.items : [];
-  const sideOf = (it) => {
-    const t = String(it?.layerPath?.[0] || "").toLowerCase();
-    if (t.startsWith("front")) return "front";
-    if (t.startsWith("back")) return "back";
-    return "front";
-  };
-  const fx = {
-    front: { print: [], foil: [], uv: [], emboss: [], deboss: [], die: [] },
-    back: { print: [], foil: [], uv: [], emboss: [], deboss: [], die: [] },
-  };
-  for (const it of items) {
-    const side = sideOf(it);
-    const f = (it?.finish || "print").toLowerCase();
-    (fx[side][f] ?? fx[side].print).push({
-      name: it?.name || "",
-      bounds: it?.bounds || null,
-      layerPath: it?.layerPath || [],
-    });
-  }
-  adapted.effects = fx;
   return adapted;
 }
 
-// // src/api/adapter.js
-// // Adapts the Windows parser JSON to the shape expected by the viewer.
-
-// export function adaptParserJsonToViewer(data) {
-//   if (!data || typeof data !== 'object') {
-//     throw new Error('adaptParserJsonToViewer: invalid input');
-//   }
-
-//   // dimensions in mm from artboard 0 (your exporter already emits this)
-//   const ab = data?.doc?.artboards?.[0]?.bounds || {};
-//   const widthMm  = typeof ab.w === 'number' ? ab.w : null;
-//   const heightMm = typeof ab.h === 'number' ? ab.h : null;
-
-//   // job id aliases
-//   const jobId =
-//     data?.job_id ||
-//     data?.jobId  ||
-//     data?.id     ||
-//     null;
-
-//   // Fallback dims if missing (will still render a plane)
-//   const dims = {
-//     width:  widthMm ?? 90,  // mm
-//     height: heightMm ?? 54, // mm
-//     units: 'mm'
-//   };
-
-//   // Shape the object so existing viewer code is happy right away
-//   const adapted = {
-//     // preferred by viewer
-//     jobId,
-//     id: jobId,
-//     dimensions: dims,
-//     maps: {},                     // no textures yet (that’s v1)
-
-//     // also provide the legacy-nested shape some code paths look for
-//     parseResult: {
-//       jobId,
-//       dimensions: dims,
-//       maps: {}
-//     },
-
-//     // keep the original payload for debugging/overlays later
-//     original: data
-//   };
-
-//   // (Optional) pre-group items for future overlays — safe to include now
-//   const items = Array.isArray(data.items) ? data.items : [];
-//   const sideOf = (it) => {
-//     const top = String(it?.layerPath?.[0] || '').toLowerCase();
-//     if (top.startsWith('front')) return 'front';
-//     if (top.startsWith('back'))  return 'back';
-//     return 'front';
-//   };
-//   const fx = { front: { print: [], foil: [], uv: [], emboss: [], deboss: [], die: [] },
-//                back:  { print: [], foil: [], uv: [], emboss: [], deboss: [], die: [] } };
-
-//   for (const it of items) {
-//     const side = sideOf(it);
-//     const f = (it?.finish || 'print').toLowerCase();
-//     const bucket = (fx[side][f] ?? fx[side].print);
-//     bucket.push({
-//       name: it?.name || '',
-//       bounds: it?.bounds || null,
-//       layerPath: it?.layerPath || []
-//     });
-//   }
-
-//   adapted.effects = fx;
-//   return adapted;
-// }
+function extractFoilColor(layerName) {
+  if (layerName.includes("gold")) return "gold";
+  if (layerName.includes("silver")) return "silver";
+  if (layerName.includes("copper")) return "copper";
+  if (layerName.includes("rose")) return "rose_gold";
+  if (layerName.includes("hot_pink")) return "hot_pink";
+  if (layerName.includes("teal")) return "teal";
+  return "gold"; // default
+}

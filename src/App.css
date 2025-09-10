@@ -390,3 +390,300 @@
   background: #f8f9fa;
   color: #495057;
 }
+
+/* Add these styles to the existing src/App.css file */
+
+/* New effect badge styles for actual parser output */
+.effect-badge.print {
+  background: linear-gradient(45deg, #6c757d, #495057);
+}
+
+.effect-badge.spot_uv {
+  background: linear-gradient(45deg, #667eea, #764ba2);
+}
+
+.effect-badge.die_cut {
+  background: linear-gradient(45deg, #ff6b6b, #ee5a52);
+}
+
+.effect-badge.hot_pink {
+  background: linear-gradient(45deg, #FF1493, #DC143C);
+}
+
+.effect-badge.teal {
+  background: linear-gradient(45deg, #008080, #006666);
+}
+
+/* Update layer type styles for actual parser output */
+.layer-type.print {
+  background: #e9ecef;
+  color: #495057;
+}
+
+.layer-type.foil {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.layer-type.spot_uv,
+.layer-type.spotUV {
+  background: #cce5ff;
+  color: #0066cc;
+}
+
+.layer-type.emboss {
+  background: #f0f0f0;
+  color: #666;
+}
+
+.layer-type.die_cut {
+  background: #ffcccc;
+  color: #cc0000;
+}
+
+/* Effect type styles for the new structure */
+.effect-type.print {
+  background: #6c757d;
+}
+
+.effect-type.foil {
+  background: #ffd700;
+  color: #333;
+}
+
+.effect-type.spot_uv {
+  background: #667eea;
+}
+
+.effect-type.emboss {
+  background: #8e9eab;
+}
+
+.effect-type.die_cut {
+  background: #ff6b6b;
+}
+
+/* Analysis view improvements */
+.analysis-details .detail-group {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  border-left: 4px solid #667eea;
+}
+
+.analysis-details .detail-group h4 {
+  color: #667eea;
+  margin-bottom: 15px;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Layer item improvements */
+.layers-list .layer-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  border-left: 3px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.layers-list .layer-item:hover {
+  background: #e9ecef;
+  border-left-color: #667eea;
+}
+
+.layer-item .layer-name {
+  flex: 1;
+  font-weight: 500;
+  color: #333;
+  text-transform: capitalize;
+}
+
+.layer-item .effect-type {
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: white;
+}
+
+/* Processing stats improvements */
+.processing-stats {
+  background: linear-gradient(135deg, rgba(40, 167, 69, 0.05) 0%, rgba(32, 201, 151, 0.05) 100%);
+  border: 1px solid rgba(40, 167, 69, 0.2);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.stat-item {
+  text-align: center;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: transform 0.2s ease;
+}
+
+.stat-item:hover {
+  transform: translateY(-2px);
+}
+
+.stat-value {
+  display: block;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #333;
+  margin-top: 4px;
+}
+
+.stat-value.confidence {
+  color: #28a745;
+}
+
+.stat-value.method {
+  font-size: 0.9rem;
+  color: #667eea;
+  font-weight: 600;
+}
+
+/* Preview area improvements */
+.preview-area {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(102, 126, 234, 0.1);
+}
+
+/* Navigation improvements */
+.preview-nav {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 15px;
+  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+  border-radius: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.nav-btn {
+  padding: 12px 24px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  color: #666;
+  position: relative;
+  overflow: hidden;
+}
+
+.nav-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(102, 126, 234, 0.1), transparent);
+  transition: left 0.5s ease;
+}
+
+.nav-btn:hover::before {
+  left: 100%;
+}
+
+.nav-btn:hover {
+  background: rgba(102, 126, 234, 0.1);
+  color: #667eea;
+  border-color: rgba(102, 126, 234, 0.3);
+}
+
+.nav-btn.active {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  border-color: #667eea;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.nav-btn.reset-btn {
+  margin-left: auto;
+  background: rgba(255, 107, 107, 0.1);
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.nav-btn.reset-btn:hover {
+  background: #ff6b6b;
+  color: white;
+  border-color: #ff6b6b;
+}
+
+/* Success actions styling */
+.success-actions {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+
+.view-3d-btn {
+  background: linear-gradient(135deg, #17a2b8, #6f42c1);
+  color: white;
+  border: none;
+  padding: 14px 28px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(23, 162, 184, 0.4);
+}
+
+.view-3d-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(23, 162, 184, 0.5);
+}
+
+/* Better mobile responsiveness */
+@media (max-width: 768px) {
+  .preview-nav {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px;
+  }
+  
+  .nav-btn.reset-btn {
+    margin-left: 0;
+    margin-top: 10px;
+  }
+  
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  
+  .layers-list .layer-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .success-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

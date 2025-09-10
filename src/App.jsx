@@ -27,25 +27,34 @@ function App() {
     setShowShareModal(true);
   };
 
-  // Safely extract data for analysis view
+  // Safely extract data for analysis view - FIXED for actual parser structure
   const getAnalysisData = () => {
     if (!uploadedData) return null;
 
     const parseResult = uploadedData.parseResult || {};
-    const file = uploadedData.file || {};
+    const layers = uploadedData.layers || {};
+    const metadata = parseResult.metadata || {};
+    const parsing = parseResult.parsing || {};
+    
+    // Count total items from all layer types
+    const totalItems = Object.values(layers).reduce((total, items) => 
+      total + (Array.isArray(items) ? items.length : 0), 0);
     
     return {
       file: {
-        name: file.name || 'Unknown file',
-        size: file.size || 0
+        name: metadata.originalFile || uploadedData.file?.name || 'Unknown file',
+        size: uploadedData.file?.size || 0
       },
       parseResult: {
         dimensions: parseResult.dimensions || { width: 0, height: 0, thickness: 0.35 },
-        metadata: parseResult.metadata || {},
-        maps: parseResult.maps || {},
-        materials: parseResult.materials || {},
-        parsing: parseResult.parsing || { confidence: 0, method: 'Unknown' },
-        fileType: file.name?.endsWith('.ai') ? 'ai' : 'pdf'
+        metadata: metadata,
+        layers: layers,
+        parsing: {
+          confidence: parsing.confidence || 0,
+          method: parsing.method || 'OCG Layer Extraction'
+        },
+        totalItems: totalItems,
+        processingTime: uploadedData.processingTime || metadata.processingTime || 0
       }
     };
   };
@@ -110,7 +119,7 @@ function App() {
                 </div>
               </div>
             ) : (
-              // Analysis View - Fixed to handle actual parser structure
+              // Analysis View - FIXED to handle actual parser structure
               <div className="analysis-content">
                 <div className="analysis-card">
                   <h3>File Analysis Results</h3>
@@ -119,33 +128,41 @@ function App() {
                       <h4>📁 File Information</h4>
                       <p><strong>Name:</strong> {analysisData.file.name}</p>
                       <p><strong>Size:</strong> {(analysisData.file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                      <p><strong>Type:</strong> {analysisData.parseResult.fileType.toUpperCase()}</p>
-                      <p><strong>Job ID:</strong> {uploadedData.jobId || 'N/A'}</p>
+                      <p><strong>Type:</strong> {analysisData.file.name?.endsWith('.ai') ? 'AI' : 'PDF'}</p>
+                      <p><strong>Job ID:</strong> {uploadedData.jobId?.slice(0, 16) || 'N/A'}</p>
                     </div>
 
                     <div className="detail-group">
                       <h4>📐 Card Specifications</h4>
-                      <p><strong>Dimensions:</strong> {Math.round(analysisData.parseResult.dimensions.width)} × {Math.round(analysisData.parseResult.dimensions.height)} units</p>
+                      <p><strong>Dimensions:</strong> {Math.round(analysisData.parseResult.dimensions.width)} × {Math.round(analysisData.parseResult.dimensions.height)} mm</p>
                       <p><strong>Thickness:</strong> {analysisData.parseResult.dimensions.thickness} mm</p>
-                      <p><strong>Material:</strong> {analysisData.parseResult.materials.paper?.preset || 'Standard'}</p>
-                      <p><strong>Resolution:</strong> {uploadedData.parseResult?.coords?.dpi || 600} DPI</p>
+                      <p><strong>Total Items:</strong> {analysisData.parseResult.totalItems}</p>
+                      <p><strong>Processing Time:</strong> {analysisData.parseResult.processingTime ? `${(analysisData.parseResult.processingTime / 1000).toFixed(1)}s` : 'N/A'}</p>
                     </div>
 
                     <div className="detail-group">
-                      <h4>🎨 Texture Maps Found</h4>
-                      <p><strong>Total Maps:</strong> {Object.keys(analysisData.parseResult.maps).length}</p>
+                      <h4>🎨 Detected Layers</h4>
+                      <p><strong>Layer Types:</strong> {Object.keys(analysisData.parseResult.layers).length}</p>
                       <div className="layers-list">
-                        {Object.entries(analysisData.parseResult.maps).map(([mapType, mapData], index) => (
+                        {Object.entries(analysisData.parseResult.layers).map(([layerType, items], index) => (
                           <div key={index} className="layer-item">
-                            <span className={`layer-type ${mapType.includes('albedo') ? 'background' : 'effect'}`}>
-                              {mapType.includes('albedo') ? 'texture' : 'effect'}
+                            <span className={`layer-type ${layerType}`}>
+                              {layerType.replace('_', ' ')}
                             </span>
-                            <span className="layer-name">{mapType}</span>
-                            <span className={`effect-type ${mapType}`}>
-                              {Array.isArray(mapData) ? `${mapData.length} items` : '1 item'}
+                            <span className="layer-name">{layerType}</span>
+                            <span className={`effect-type ${layerType}`}>
+                              {Array.isArray(items) ? `${items.length} items` : '1 item'}
                             </span>
                           </div>
                         ))}
+                        
+                        {Object.keys(analysisData.parseResult.layers).length === 0 && (
+                          <div className="layer-item">
+                            <span className="layer-type background">No layers</span>
+                            <span className="layer-name">Base card only</span>
+                            <span className="effect-type print">print</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -153,17 +170,17 @@ function App() {
                       <h4>✨ Processing Results</h4>
                       <div className="effect-summary">
                         <span className="effect-badge parsing">
-                          Confidence: {Math.round((analysisData.parseResult.parsing.confidence || 0) * 100)}%
+                          Confidence: {Math.round(analysisData.parseResult.parsing.confidence * 100)}%
                         </span>
                       </div>
                       <div className="effect-summary">
                         <span className="effect-badge method">
-                          Method: {analysisData.parseResult.parsing.method || 'OCG Extraction'}
+                          Method: {analysisData.parseResult.parsing.method}
                         </span>
                       </div>
                       <div className="effect-summary">
                         <span className="effect-badge processing">
-                          Processing: {uploadedData.processingTime ? `${(uploadedData.processingTime / 1000).toFixed(1)}s` : 'N/A'}
+                          Status: Successfully processed
                         </span>
                       </div>
                     </div>

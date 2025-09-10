@@ -9,51 +9,42 @@ export default function ThreeViewer({ cardData }) {
   const [autoRotate, setAutoRotate] = useState(false);
   const [showControls, setShowControls] = useState(true);
 
-  // Process the card data to extract information safely
+  // Process the card data to extract information from actual parser structure
   const processedCardInfo = useMemo(() => {
     if (!cardData) {
       return null;
     }
 
-    // Handle the ACTUAL structure from your parser
     const parseResult = cardData.parseResult || cardData;
+    const layers = cardData.layers || {};
+    const metadata = parseResult.metadata || {};
     
-    // Extract dimensions
-    const dimensions = parseResult.dimensions || {};
-    const width = dimensions.width || 89;
-    const height = dimensions.height || 51;
+    // Count total effects from all layer types
+    const effectsCount = Object.values(layers).reduce((total, items) => 
+      total + (Array.isArray(items) ? items.length : 0), 0);
     
-    // Extract file name
-    const originalFile = parseResult.metadata?.originalFile ||
-                        cardData.file?.name ||
-                        'Business Card';
-    
-    // Extract available maps/effects
-    const maps = parseResult.maps || {};
-    const effectsCount = Object.keys(maps).length;
-    
-    // Create mock layers array since your parser doesn't provide it
-    const layers = Object.keys(maps).map((mapType, index) => ({
-      id: `layer-${index}`,
-      name: mapType,
-      type: mapType === 'albedo_front' || mapType === 'albedo_back' ? 'background' : 'effect'
-    }));
-
-    // Create mock effects object for UI display
+    // Create effects summary for UI display
     const effects = {};
-    Object.keys(maps).forEach(mapType => {
-      if (mapType !== 'albedo_front' && mapType !== 'albedo_back') {
-        effects[mapType] = Array.isArray(maps[mapType]) ? maps[mapType] : [maps[mapType]];
+    Object.entries(layers).forEach(([type, items]) => {
+      if (Array.isArray(items) && items.length > 0) {
+        effects[type] = items;
       }
     });
 
+    // Extract file information
+    const originalFile = metadata.originalFile || 'Business Card';
+    const dimensions = parseResult.dimensions || { width: 89, height: 51 };
+    const processingTime = metadata.processingTime ? 
+      `${(metadata.processingTime / 1000).toFixed(1)}s` : 'N/A';
+
     return {
       originalFile,
-      dimensions: { width, height },
-      layers,
+      dimensions,
       effects,
       effectsCount,
-      // Pass the full card data to the 3D model
+      processingTime,
+      totalItems: metadata.totalItems || effectsCount,
+      confidence: parseResult.parsing?.confidence || 0,
       fullCardData: cardData
     };
   }, [cardData]);
@@ -66,7 +57,16 @@ export default function ThreeViewer({ cardData }) {
     );
   }
 
-  const { originalFile, dimensions, layers, effects, effectsCount, fullCardData } = processedCardInfo;
+  const { 
+    originalFile, 
+    dimensions, 
+    effects, 
+    effectsCount, 
+    processingTime,
+    totalItems,
+    confidence,
+    fullCardData 
+  } = processedCardInfo;
 
   return (
     <div className="three-viewer-container">
@@ -97,30 +97,31 @@ export default function ThreeViewer({ cardData }) {
           {/* Camera */}
           <PerspectiveCamera 
             makeDefault 
-            position={[0, 0, 8]} 
+            position={[0, 0, 0.2]} // Closer for business card scale
             fov={50}
           />
 
-          {/* Lighting */}
+          {/* Lighting Setup */}
           <ambientLight intensity={0.4} />
           <directionalLight 
-            position={[5, 5, 5]} 
+            position={[0.1, 0.1, 0.1]} 
             intensity={1} 
             castShadow
             shadow-mapSize={[1024, 1024]}
           />
           <directionalLight 
-            position={[-5, 5, 5]} 
+            position={[-0.1, 0.1, 0.1]} 
             intensity={0.5} 
           />
 
           {/* Environment for reflections */}
           <Environment preset="studio" />
 
-          {/* Card Model - Pass the full card data */}
+          {/* Card Model - Pass the full adapted card data */}
           <CardModel 
             cardData={fullCardData} 
             autoRotate={autoRotate}
+            showEffects={true}
           />
 
           {/* Camera Controls */}
@@ -128,8 +129,8 @@ export default function ThreeViewer({ cardData }) {
             enablePan={true}
             enableZoom={true}
             enableRotate={true}
-            minDistance={3}
-            maxDistance={15}
+            minDistance={0.05}
+            maxDistance={0.5}
             maxPolarAngle={Math.PI / 2}
             autoRotate={false}
           />
@@ -140,24 +141,25 @@ export default function ThreeViewer({ cardData }) {
       <div className="card-info">
         <h4>{originalFile}</h4>
         <div className="info-stats">
-          <span>Texture Maps: {effectsCount}</span>
-          <span>Size: {Math.round(dimensions.width)}×{Math.round(dimensions.height)} units</span>
-          <span>3D Model: Ready</span>
+          <span>Items Found: {totalItems}</span>
+          <span>Size: {Math.round(dimensions.width)}×{Math.round(dimensions.height)}mm</span>
+          <span>Processing: {processingTime}</span>
+          <span>Confidence: {Math.round(confidence * 100)}%</span>
         </div>
         
         <div className="effects-list">
-          {Object.entries(effects).map(([effect, items]) => (
-            <div key={effect} className="effect-item">
-              <span className={`effect-badge ${effect}`}>
-                {effect}: {Array.isArray(items) ? items.length : 1}
+          {Object.entries(effects).map(([effectType, items]) => (
+            <div key={effectType} className="effect-item">
+              <span className={`effect-badge ${effectType}`}>
+                {effectType.replace('_', ' ')}: {Array.isArray(items) ? items.length : 1}
               </span>
             </div>
           ))}
           
           {effectsCount === 0 && (
             <div className="effect-item">
-              <span className="effect-badge albedo">
-                Base card only
+              <span className="effect-badge print">
+                Base card only - no special effects detected
               </span>
             </div>
           )}
@@ -182,7 +184,7 @@ export default function ThreeViewer({ cardData }) {
 function LoadingMesh() {
   return (
     <mesh position={[0, 0, 0]}>
-      <boxGeometry args={[4, 2.5, 0.1]} />
+      <boxGeometry args={[0.089, 0.051, 0.00035]} />
       <meshStandardMaterial color="#f0f0f0" wireframe />
     </mesh>
   );

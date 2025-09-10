@@ -1,286 +1,57 @@
-// src/components/CardModel.jsx - FIXED VERSION FOR ACTUAL PARSER OUTPUT
-import { useRef, useState, useEffect, useMemo } from "react";
+// src/components/CardModel.jsx - COMPLETELY REWRITTEN FOR ACTUAL PARSER OUTPUT
+import { useRef, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Box, Plane, Text } from "@react-three/drei";
-import * as THREE from "three";
-import { getAssetUrl } from "../api/client";
-import DataDebugger from "./DataDebugger";
+import { Text } from "@react-three/drei";
+import EffectOverlay from './EffectOverlay';
+import BaseCard from './BaseCard';
 
 function CardModel({ cardData, autoRotate = false, showEffects = true }) {
-  <DataDebugger data={cardData} title="Card Data Structure" />;
   const cardRef = useRef();
-  const [textures, setTextures] = useState({});
-  const [loadingProgress, setLoadingProgress] = useState(0);
-  const [textureErrors, setTextureErrors] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
 
-  // Extract jobId from ACTUAL response structure
+  // Extract data from the adapted structure
   const jobId = useMemo(() => {
-    return (
-      cardData?.jobId ||
-      cardData?.parseResult?.jobId ||
-      cardData?.uploadResult?.jobId ||
-      cardData?.id ||
-      cardData?.job_id || // <-- accept exporter field
-      null
-    );
+    return cardData?.jobId || cardData?.id || null;
   }, [cardData]);
 
-  // Memoize card dimensions with ACTUAL parser output structure
+  // Get card dimensions and convert mm to meters for Three.js
   const cardDimensions = useMemo(() => {
-    const dims =
-      cardData?.dimensions || cardData?.parseResult?.dimensions || null;
-
-    const ab =
-      cardData?.original?.doc?.artboards?.[0]?.bounds ||
-      cardData?.doc?.artboards?.[0]?.bounds ||
-      null;
-
-    const widthMm = dims?.width ?? ab?.w ?? 90;
-    const heightMm = dims?.height ?? ab?.h ?? 54;
-    const thicknessMm = cardData?.thickness ?? 0.35;
+    const dims = cardData?.dimensions || cardData?.parseResult?.dimensions || 
+                 { width: 89, height: 51, thickness: 0.35 };
 
     return {
-      // convert mm -> meters for Three.js
-      width: widthMm / 1000,
-      height: heightMm / 1000,
-      thickness: thicknessMm / 1000,
+      // Convert mm to meters for Three.js (standard practice)
+      width: dims.width / 1000,
+      height: dims.height / 1000,
+      thickness: (dims.thickness || 0.35) / 1000,
     };
   }, [cardData]);
 
-  // Extract maps from ACTUAL response structure
-  const maps = useMemo(() => {
-    return cardData?.maps || cardData?.parseResult?.maps || {};
+  // Extract layer data from the adapted structure
+  const layers = useMemo(() => {
+    return cardData?.layers || {};
   }, [cardData]);
 
-  // Extract original file name
+  // Get original file name for debugging
   const originalFileName = useMemo(() => {
-    return (
-      cardData?.originalFile ||
-      cardData?.parseResult?.metadata?.originalFile ||
-      cardData?.file?.name ||
-      "Business Card"
-    );
+    return cardData?.parseResult?.metadata?.originalFile || 
+           cardData?.file?.name || 
+           "Business Card";
   }, [cardData]);
 
-  console.log("🎨 CardModel received data:", {
+  // Count total effect items for logging
+  const totalEffects = useMemo(() => {
+    return Object.values(layers).reduce((total, items) => 
+      total + (Array.isArray(items) ? items.length : 0), 0
+    );
+  }, [layers]);
+
+  console.log("CardModel rendering:", {
     hasJobId: !!jobId,
-    hasMaps: !!maps && Object.keys(maps).length > 0,
-    mapsKeys: Object.keys(maps || {}),
-    dimensions: cardDimensions,
     fileName: originalFileName,
+    dimensions: cardDimensions,
+    layerTypes: Object.keys(layers),
+    totalEffects: totalEffects,
   });
-
-  // Load textures from EC2 microservice
-  useEffect(() => {
-    if (!maps || Object.keys(maps).length === 0) {
-      console.log("📊 No texture maps available");
-      setIsLoading(false);
-      return;
-    }
-
-    if (!jobId) {
-      console.error("❌ No jobId available for texture loading");
-      setIsLoading(false);
-      setTextureErrors(["No jobId available for loading textures"]);
-      return;
-    }
-
-    let isMounted = true;
-
-    const loadTextures = async () => {
-      console.log("🖼️ Loading textures from EC2 parser service...");
-      console.log("🆔 Job ID:", jobId);
-      console.log("🗂️ Available maps:", Object.keys(maps));
-
-      const textureLoader = new THREE.TextureLoader();
-      const loadedTextures = {};
-      const errors = [];
-      let totalTextures = 0;
-      let loadedCount = 0;
-
-      // Count total textures to load
-      for (const [mapType, mapData] of Object.entries(maps)) {
-        if (typeof mapData === "string") {
-          totalTextures++;
-        } else if (Array.isArray(mapData)) {
-          totalTextures += mapData.length;
-        }
-      }
-
-      if (totalTextures === 0) {
-        console.log("📊 No textures to load");
-        setIsLoading(false);
-        return;
-      }
-
-      console.log(`📈 Loading ${totalTextures} texture maps...`);
-
-      const updateProgress = () => {
-        if (!isMounted) return;
-        loadedCount++;
-        const progress = (loadedCount / totalTextures) * 100;
-        setLoadingProgress(progress);
-        console.log(`📊 Texture loading progress: ${progress.toFixed(1)}%`);
-      };
-
-      try {
-        // Load each texture map type
-        for (const [mapType, mapData] of Object.entries(maps)) {
-          if (!isMounted) break;
-
-          if (typeof mapData === "string") {
-            // Single texture (like albedo_front, albedo_back)
-            console.log(`🔍 Loading ${mapType}: ${mapData}`);
-
-            try {
-              const textureUrl = getAssetUrl(jobId, mapData);
-              console.log(`🌐 Texture URL: ${textureUrl}`);
-
-              const texture = await loadSingleTexture(
-                textureLoader,
-                textureUrl
-              );
-
-              if (isMounted && texture) {
-                loadedTextures[mapType] = texture;
-                console.log(`✅ Loaded ${mapType} texture`);
-              }
-            } catch (error) {
-              console.warn(`⚠️ Failed to load texture: ${mapData}`, error);
-              errors.push(`${mapType}: ${mapData}`);
-            }
-
-            updateProgress();
-          } else if (Array.isArray(mapData)) {
-            // Array of effect textures (foil, spotUV, emboss, etc.)
-            console.log(
-              `🔍 Loading ${mapType} effects: ${mapData.length} items`
-            );
-            loadedTextures[mapType] = [];
-
-            for (let i = 0; i < mapData.length; i++) {
-              if (!isMounted) break;
-
-              const item = mapData[i];
-              const maskFile = extractMaskFileName(item);
-
-              if (maskFile) {
-                try {
-                  const textureUrl = getAssetUrl(jobId, maskFile);
-                  console.log(`🎨 Loading effect texture: ${maskFile}`);
-
-                  const texture = await loadSingleTexture(
-                    textureLoader,
-                    textureUrl
-                  );
-
-                  if (isMounted && texture) {
-                    loadedTextures[mapType].push({
-                      ...item,
-                      texture,
-                      maskFile,
-                    });
-                    console.log(`✅ Loaded ${mapType}[${i}]: ${maskFile}`);
-                  }
-                } catch (error) {
-                  console.warn(
-                    `⚠️ Failed to load effect texture: ${maskFile}`,
-                    error
-                  );
-                  errors.push(`${mapType}[${i}]: ${maskFile}`);
-                }
-              }
-
-              updateProgress();
-            }
-          }
-        }
-
-        if (isMounted) {
-          setTextures(loadedTextures);
-          setTextureErrors(errors);
-          setIsLoading(false);
-
-          console.log("🎯 Texture loading completed:", {
-            totalMaps: Object.keys(loadedTextures).length,
-            totalTextures: loadedCount,
-            errors: errors.length,
-            jobId: jobId,
-          });
-        }
-      } catch (error) {
-        console.error("❌ Critical texture loading error:", error);
-        if (isMounted) {
-          setTextureErrors([...errors, `Critical error: ${error.message}`]);
-          setIsLoading(false);
-        }
-      }
-    };
-
-    loadTextures();
-
-    // Cleanup function
-    return () => {
-      isMounted = false;
-    };
-  }, [maps, jobId]);
-
-  // Helper function to load a single texture
-  const loadSingleTexture = async (textureLoader, textureUrl) => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-
-      img.onload = () => {
-        const texture = textureLoader.load(
-          textureUrl,
-          (loadedTexture) => {
-            // Configure texture for optimal quality
-            loadedTexture.wrapS = THREE.ClampToEdgeWrapping;
-            loadedTexture.wrapT = THREE.ClampToEdgeWrapping;
-            loadedTexture.flipY = false;
-            loadedTexture.minFilter = THREE.LinearFilter;
-            loadedTexture.magFilter = THREE.LinearFilter;
-            loadedTexture.generateMipmaps = false;
-            resolve(loadedTexture);
-          },
-          undefined,
-          (error) => {
-            console.error("Three.js texture loading error:", error);
-            reject(error);
-          }
-        );
-      };
-
-      img.onerror = (error) => {
-        console.error("Image loading error:", error);
-        reject(new Error(`Failed to load image: ${textureUrl}`));
-      };
-
-      img.src = textureUrl;
-    });
-  };
-
-  // Helper function to extract mask file name
-  const extractMaskFileName = (item) => {
-    if (typeof item === "string") {
-      return item;
-    }
-
-    if (typeof item === "object" && item !== null) {
-      return (
-        item.mask ||
-        item.maskFile ||
-        item.file ||
-        item.texture ||
-        item.asset ||
-        null
-      );
-    }
-
-    return null;
-  };
 
   // Auto rotation animation
   useFrame((state, delta) => {
@@ -289,250 +60,129 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     }
   });
 
-  // Show loading placeholder if no card data
+  // Show placeholder if no card data
   if (!cardData) {
     return <CardModelPlaceholder message="Upload a file to see 3D preview" />;
   }
 
-  // Show loading state while textures are loading
-  if (isLoading) {
-    return (
-      <CardModelPlaceholder
-        message={`Loading textures... ${Math.round(loadingProgress)}%`}
-        cardDimensions={cardDimensions}
-        showProgress={true}
-        progress={loadingProgress}
-      />
-    );
-  }
-
-  console.log("🎨 Rendering 3D card with dimensions:", cardDimensions);
-
   return (
     <group ref={cardRef} position={[0, 0, 0]}>
-      {/* Base Card with Albedo Texture */}
-      <BaseCardMesh
-        dimensions={cardDimensions}
-        albedoTexture={textures.albedo_front || textures.albedo}
-        backTexture={textures.albedo_back}
-      />
-
-      {/* Effect Layers */}
+      {/* Base Card */}
+      <BaseCard dimensions={cardDimensions} />
+      
+      {/* Effect Layers - render as colored overlays based on bounds */}
       {showEffects && (
         <>
+          {/* Print Layers (base content) */}
+          {layers.print?.map((printItem, index) => (
+            <EffectOverlay
+              key={`print-${index}`}
+              item={printItem}
+              cardDimensions={cardDimensions}
+              effectType="print"
+              zOffset={0.0001 + index * 0.0001}
+            />
+          ))}
+
           {/* Foil Effects */}
-          {textures.foil &&
-            textures.foil.map((foilLayer, index) => (
-              <EffectLayer
-                key={`foil-${index}`}
-                effectData={foilLayer}
-                cardDimensions={cardDimensions}
-                zIndex={0.001 + index * 0.0002}
-                materialType="foil"
-              />
-            ))}
+          {layers.foil?.map((foilItem, index) => (
+            <EffectOverlay
+              key={`foil-${index}`}
+              item={foilItem}
+              cardDimensions={cardDimensions}
+              effectType="foil"
+              zOffset={0.001 + index * 0.0002}
+            />
+          ))}
 
           {/* Spot UV Effects */}
-          {textures.spotUV &&
-            textures.spotUV.map((uvLayer, index) => (
-              <EffectLayer
-                key={`uv-${index}`}
-                effectData={uvLayer}
-                cardDimensions={cardDimensions}
-                zIndex={0.002 + index * 0.0002}
-                materialType="spotUV"
-              />
-            ))}
+          {layers.spot_uv?.map((uvItem, index) => (
+            <EffectOverlay
+              key={`uv-${index}`}
+              item={uvItem}
+              cardDimensions={cardDimensions}
+              effectType="spotUV"
+              zOffset={0.002 + index * 0.0002}
+            />
+          ))}
 
           {/* Emboss Effects */}
-          {textures.emboss &&
-            textures.emboss.map((embossLayer, index) => (
-              <EffectLayer
-                key={`emboss-${index}`}
-                effectData={embossLayer}
-                cardDimensions={cardDimensions}
-                zIndex={0.003 + index * 0.0002}
-                materialType="emboss"
-              />
-            ))}
+          {layers.emboss?.map((embossItem, index) => (
+            <EffectOverlay
+              key={`emboss-${index}`}
+              item={embossItem}
+              cardDimensions={cardDimensions}
+              effectType="emboss"
+              zOffset={0.003 + index * 0.0002}
+            />
+          ))}
+
+          {/* Die Cut Effects */}
+          {layers.die_cut?.map((dieItem, index) => (
+            <EffectOverlay
+              key={`die-${index}`}
+              item={dieItem}
+              cardDimensions={cardDimensions}
+              effectType="die_cut"
+              zOffset={0.004 + index * 0.0002}
+            />
+          ))}
         </>
       )}
 
       {/* Debug info (only in development) */}
-      {import.meta.env.DEV && textureErrors.length > 0 && (
+      {import.meta.env.DEV && (
         <Text
-          position={[0, -cardDimensions.height / 2 - 0.5, 0]}
-          fontSize={0.1}
-          color="red"
+          position={[0, -cardDimensions.height / 2 - 0.02, 0]}
+          fontSize={0.01}
+          color="#666666"
           anchorX="center"
         >
-          {textureErrors.length} texture errors
+          Effects: {totalEffects} | Job: {jobId ? jobId.slice(0, 8) + '...' : 'N/A'}
+        </Text>
+      )}
+
+      {/* Show message when no effects are found */}
+      {totalEffects === 0 && (
+        <Text
+          position={[0, 0, cardDimensions.thickness / 2 + 0.001]}
+          fontSize={0.005}
+          color="#999999"
+          anchorX="center"
+          anchorY="middle"
+        >
+          No special effects detected
         </Text>
       )}
     </group>
   );
 }
 
-// Base card mesh component
-function BaseCardMesh({ dimensions, albedoTexture, backTexture }) {
-  const { width, height, thickness } = dimensions;
-
-  const frontMaterial = useMemo(() => {
-    return new THREE.MeshStandardMaterial({
-      map: albedoTexture || null,
-      color: albedoTexture ? "#ffffff" : "#f8f9fa",
-      roughness: albedoTexture ? 0.8 : 0.9,
-      metalness: 0.0,
-      side: THREE.FrontSide,
-    });
-  }, [albedoTexture]);
-
-  return (
-    <Box args={[width, height, thickness]} position={[0, 0, 0]}>
-      <primitive object={frontMaterial} attach="material" />
-    </Box>
-  );
-}
-
-// Effect layer component
-function EffectLayer({ effectData, cardDimensions, zIndex, materialType }) {
-  const { texture, bounds, color, mode, side } = effectData;
-
-  if (!texture || !bounds) {
-    console.warn(`⚠️ Missing texture or bounds for ${materialType} effect`);
-    return null;
-  }
-
-  const effectWidth = (bounds.width / 89) * cardDimensions.width;
-  const effectHeight = (bounds.height / 51) * cardDimensions.height;
-
-  const effectX =
-    ((bounds.x + bounds.width / 2 - 44.5) / 89) * cardDimensions.width;
-  const effectY =
-    -((bounds.y + bounds.height / 2 - 25.5) / 51) * cardDimensions.height;
-  const effectZ = cardDimensions.thickness / 2 + zIndex;
-
-  const material = useMemo(() => {
-    const baseProps = {
-      alphaMap: texture,
-      transparent: true,
-      alphaTest: 0.1,
-      side: side === "back" ? THREE.BackSide : THREE.FrontSide,
-      blending: THREE.NormalBlending,
-    };
-
-    switch (materialType) {
-      case "foil":
-        const foilColors = {
-          gold: new THREE.Color("#FFD700"),
-          silver: new THREE.Color("#C0C0C0"),
-          copper: new THREE.Color("#B87333"),
-          rose_gold: new THREE.Color("#E8B4B8"),
-          default: new THREE.Color("#FFD700"),
-        };
-
-        return new THREE.MeshStandardMaterial({
-          ...baseProps,
-          color: foilColors[color] || foilColors.default,
-          metalness: 1.0,
-          roughness: 0.05,
-          envMapIntensity: 2.5,
-        });
-
-      case "spotUV":
-        return new THREE.MeshStandardMaterial({
-          ...baseProps,
-          color: new THREE.Color("#ffffff"),
-          metalness: 0.0,
-          roughness: 0.01,
-          clearcoat: 1.0,
-          clearcoatRoughness: 0.0,
-        });
-
-      case "emboss":
-        return new THREE.MeshStandardMaterial({
-          ...baseProps,
-          color: new THREE.Color("#ffffff"),
-          metalness: 0.0,
-          roughness: 0.6,
-          normalMap: texture,
-          normalScale: new THREE.Vector2(0.8, 0.8),
-        });
-
-      default:
-        return new THREE.MeshStandardMaterial({
-          ...baseProps,
-          color: new THREE.Color("#667eea"),
-          opacity: 0.7,
-        });
-    }
-  }, [texture, materialType, color, mode, side]);
-
-  return (
-    <Plane
-      args={[effectWidth, effectHeight]}
-      position={[effectX, effectY, effectZ]}
-    >
-      <primitive object={material} attach="material" />
-    </Plane>
-  );
-}
-
-// Loading placeholder component
+// Simple placeholder component for loading states
 function CardModelPlaceholder({
   message = "Loading...",
-  cardDimensions = { width: 4, height: 2.5, thickness: 0.1 },
-  showProgress = false,
-  progress = 0,
+  cardDimensions = { width: 0.089, height: 0.051, thickness: 0.00035 },
 }) {
   const meshRef = useRef();
 
   useFrame((state) => {
     if (meshRef.current && meshRef.current.material) {
-      meshRef.current.material.opacity =
-        0.5 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
+      meshRef.current.material.opacity = 0.5 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
     }
   });
 
   return (
     <group>
-      <Box
-        ref={meshRef}
-        args={[
-          cardDimensions.width,
-          cardDimensions.height,
-          cardDimensions.thickness,
-        ]}
-      >
-        <meshStandardMaterial
-          color="#e9ecef"
-          wireframe={!showProgress}
-          opacity={0.7}
-          transparent
-        />
-      </Box>
-
+      <BaseCard dimensions={cardDimensions} />
       <Text
-        position={[0, -cardDimensions.height / 2 - 0.3, 0]}
-        fontSize={0.15}
+        position={[0, -cardDimensions.height / 2 - 0.02, 0]}
+        fontSize={0.008}
         color="#666666"
         anchorX="center"
         anchorY="middle"
       >
         {message}
       </Text>
-
-      {showProgress && (
-        <Text
-          position={[0, -cardDimensions.height / 2 - 0.6, 0]}
-          fontSize={0.12}
-          color="#667eea"
-          anchorX="center"
-          anchorY="middle"
-        >
-          {Math.round(progress)}% • Loading from EC2 server...
-        </Text>
-      )}
     </group>
   );
 }
