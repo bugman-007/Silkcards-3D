@@ -1,4 +1,4 @@
-// src/components/EffectOverlay.jsx - NEW FILE
+// src/components/EffectOverlay.jsx - FIXED FOR PROPER COORDINATE MAPPING
 import { useMemo } from 'react';
 import { Plane } from '@react-three/drei';
 import * as THREE from 'three';
@@ -10,26 +10,30 @@ export default function EffectOverlay({ item, cardDimensions, effectType, zOffse
 
   // Convert bounds from document coordinates to 3D coordinates
   const overlayDimensions = useMemo(() => {
-    // Use artboard dimensions from the JSON (215.9 x 279.4)
-    const artboardWidth = 215.9;
-    const artboardHeight = 279.4;
+    // Standard business card is 89mm x 51mm
+    const CARD_WIDTH_MM = 89;
+    const CARD_HEIGHT_MM = 51;
     
-    // Calculate scale factors to map document coordinates to card coordinates
-    const scaleX = cardDimensions.width / (artboardWidth / 1000); // Convert to meters
-    const scaleY = cardDimensions.height / (artboardHeight / 1000);
+    // Convert card dimensions back to mm for calculation
+    const cardWidthMm = cardDimensions.width * 1000;
+    const cardHeightMm = cardDimensions.height * 1000;
     
-    // Convert bounds to card coordinates
-    const width = (bounds.w / 1000) * scaleX;
-    const height = (bounds.h / 1000) * scaleY;
+    // Scale factor from bounds to 3D space
+    const scaleX = cardDimensions.width / cardWidthMm;
+    const scaleY = cardDimensions.height / cardHeightMm;
     
-    // Calculate center position relative to card center
-    const centerX = (bounds.x + bounds.w / 2) / 1000;
-    const centerY = (bounds.y + bounds.h / 2) / 1000;
-    const artboardCenterX = artboardWidth / 2000;
-    const artboardCenterY = artboardHeight / 2000;
+    // Convert bounds to 3D dimensions (bounds are already relative to card)
+    const width = bounds.w * scaleX;
+    const height = bounds.h * scaleY;
     
-    const x = (centerX - artboardCenterX) * scaleX;
-    const y = -((centerY - artboardCenterY) * scaleY); // Flip Y for Three.js
+    // Calculate position relative to card center
+    // Bounds x,y are from top-left, we need center position
+    const centerX = (bounds.x + bounds.w / 2) * scaleX;
+    const centerY = (bounds.y + bounds.h / 2) * scaleY;
+    
+    // Convert to Three.js coordinates (center card at origin)
+    const x = centerX - cardDimensions.width / 2;
+    const y = cardDimensions.height / 2 - centerY; // Flip Y for Three.js
     const z = cardDimensions.thickness / 2 + zOffset;
     
     return { width, height, x, y, z };
@@ -63,11 +67,11 @@ export default function EffectOverlay({ item, cardDimensions, effectType, zOffse
           color: foilColor,
           metalness: 1.0,
           roughness: 0.1,
-          emissive: foilColor.clone().multiplyScalar(0.1),
+          emissive: foilColor.clone().multiplyScalar(0.15),
           opacity: 0.9
         });
 
-      case 'spotUV':
+      case 'spot_uv':
         return new THREE.MeshStandardMaterial({
           ...baseProps,
           color: new THREE.Color('#ffffff'),
@@ -75,7 +79,8 @@ export default function EffectOverlay({ item, cardDimensions, effectType, zOffse
           roughness: 0.02,
           clearcoat: 1.0,
           clearcoatRoughness: 0.0,
-          opacity: 0.8
+          opacity: 0.3, // More subtle for UV coating
+          emissive: new THREE.Color('#ffffff').multiplyScalar(0.1)
         });
 
       case 'emboss':
@@ -84,15 +89,15 @@ export default function EffectOverlay({ item, cardDimensions, effectType, zOffse
           color: new THREE.Color('#f5f5f5'),
           metalness: 0.0,
           roughness: 0.6,
-          opacity: 0.7,
-          // Simulate height by making it slightly brighter
-          emissive: new THREE.Color('#ffffff').multiplyScalar(0.05)
+          opacity: 0.4,
+          // Simulate raised surface
+          emissive: new THREE.Color('#ffffff').multiplyScalar(0.08)
         });
 
       case 'print':
         return new THREE.MeshStandardMaterial({
           ...baseProps,
-          color: new THREE.Color('#333333'),
+          color: new THREE.Color('#2c3e50'),
           metalness: 0.0,
           roughness: 0.9,
           opacity: 0.8

@@ -1,4 +1,4 @@
-// src/App.jsx - FIXED VERSION FOR ACTUAL PARSER OUTPUT
+// src/App.jsx - UPDATED FOR MULTI-CARD SUPPORT
 import { useState } from 'react'
 import './App.css'
 import FileUploader from './components/FileUploader'
@@ -27,18 +27,26 @@ function App() {
     setShowShareModal(true);
   };
 
-  // Safely extract data for analysis view - FIXED for actual parser structure
+  // Safely extract data for analysis view - FIXED for multi-card structure
   const getAnalysisData = () => {
     if (!uploadedData) return null;
 
     const parseResult = uploadedData.parseResult || {};
+    const cards = uploadedData.cards || {};
     const layers = uploadedData.layers || {};
     const metadata = parseResult.metadata || {};
     const parsing = parseResult.parsing || {};
     
-    // Count total items from all layer types
-    const totalItems = Object.values(layers).reduce((total, items) => 
-      total + (Array.isArray(items) ? items.length : 0), 0);
+    // Count total items from all cards
+    const allCardItems = Object.values(cards).reduce((total, cardLayers) => {
+      return total + Object.values(cardLayers).reduce((cardTotal, items) => 
+        cardTotal + (Array.isArray(items) ? items.length : 0), 0);
+    }, 0);
+    
+    // If no cards detected, use layers directly
+    const totalItems = allCardItems > 0 ? allCardItems : 
+      Object.values(layers).reduce((total, items) => 
+        total + (Array.isArray(items) ? items.length : 0), 0);
     
     return {
       file: {
@@ -47,7 +55,11 @@ function App() {
       },
       parseResult: {
         dimensions: parseResult.dimensions || { width: 0, height: 0, thickness: 0.35 },
-        metadata: metadata,
+        metadata: {
+          ...metadata,
+          cardsDetected: Object.keys(cards).length || 1
+        },
+        cards: cards,
         layers: layers,
         parsing: {
           confidence: parsing.confidence || 0,
@@ -119,7 +131,7 @@ function App() {
                 </div>
               </div>
             ) : (
-              // Analysis View - FIXED to handle actual parser structure
+              // Analysis View - UPDATED for multi-card structure
               <div className="analysis-content">
                 <div className="analysis-card">
                   <h3>File Analysis Results</h3>
@@ -130,6 +142,9 @@ function App() {
                       <p><strong>Size:</strong> {(analysisData.file.size / (1024 * 1024)).toFixed(2)} MB</p>
                       <p><strong>Type:</strong> {analysisData.file.name?.endsWith('.ai') ? 'AI' : 'PDF'}</p>
                       <p><strong>Job ID:</strong> {uploadedData.jobId?.slice(0, 16) || 'N/A'}</p>
+                      {analysisData.parseResult.metadata.cardsDetected > 1 && (
+                        <p><strong>Cards Detected:</strong> {analysisData.parseResult.metadata.cardsDetected}</p>
+                      )}
                     </div>
 
                     <div className="detail-group">
@@ -141,29 +156,57 @@ function App() {
                     </div>
 
                     <div className="detail-group">
-                      <h4>🎨 Detected Layers</h4>
-                      <p><strong>Layer Types:</strong> {Object.keys(analysisData.parseResult.layers).length}</p>
-                      <div className="layers-list">
-                        {Object.entries(analysisData.parseResult.layers).map(([layerType, items], index) => (
-                          <div key={index} className="layer-item">
-                            <span className={`layer-type ${layerType}`}>
-                              {layerType.replace('_', ' ')}
-                            </span>
-                            <span className="layer-name">{layerType}</span>
-                            <span className={`effect-type ${layerType}`}>
-                              {Array.isArray(items) ? `${items.length} items` : '1 item'}
-                            </span>
-                          </div>
-                        ))}
-                        
-                        {Object.keys(analysisData.parseResult.layers).length === 0 && (
-                          <div className="layer-item">
-                            <span className="layer-type background">No layers</span>
-                            <span className="layer-name">Base card only</span>
-                            <span className="effect-type print">print</span>
-                          </div>
-                        )}
-                      </div>
+                      <h4>🎨 Detected Cards & Layers</h4>
+                      {Object.keys(analysisData.parseResult.cards).length > 0 ? (
+                        <div>
+                          {Object.entries(analysisData.parseResult.cards).map(([cardKey, cardLayers]) => {
+                            const cardItemCount = Object.values(cardLayers).reduce((total, items) => 
+                              total + (Array.isArray(items) ? items.length : 0), 0);
+                            const layerTypes = Object.keys(cardLayers).filter(key => 
+                              Array.isArray(cardLayers[key]) && cardLayers[key].length > 0);
+                            
+                            return (
+                              <div key={cardKey} className="card-analysis">
+                                <h5>{cardKey === 'front' ? 'Front Card' : cardKey === 'back' ? 'Back Card' : `Card ${cardKey}`}</h5>
+                                <div className="layers-list">
+                                  {layerTypes.map((layerType) => (
+                                    <div key={layerType} className="layer-item">
+                                      <span className={`layer-type ${layerType}`}>
+                                        {layerType.replace('_', ' ')}
+                                      </span>
+                                      <span className="layer-name">{layerType}</span>
+                                      <span className={`effect-type ${layerType}`}>
+                                        {cardLayers[layerType].length} items
+                                      </span>
+                                    </div>
+                                  ))}
+                                  {layerTypes.length === 0 && (
+                                    <div className="layer-item">
+                                      <span className="layer-type background">No layers</span>
+                                      <span className="layer-name">Base card only</span>
+                                      <span className="effect-type print">print</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="layers-list">
+                          {Object.entries(analysisData.parseResult.layers).map(([layerType, items], index) => (
+                            <div key={index} className="layer-item">
+                              <span className={`layer-type ${layerType}`}>
+                                {layerType.replace('_', ' ')}
+                              </span>
+                              <span className="layer-name">{layerType}</span>
+                              <span className={`effect-type ${layerType}`}>
+                                {Array.isArray(items) ? `${items.length} items` : '1 item'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <div className="detail-group">
@@ -183,6 +226,13 @@ function App() {
                           Status: Successfully processed
                         </span>
                       </div>
+                      {analysisData.parseResult.metadata.cardsDetected > 1 && (
+                        <div className="effect-summary">
+                          <span className="effect-badge texture">
+                            Multi-card layout detected
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

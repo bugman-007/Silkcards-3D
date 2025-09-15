@@ -176,8 +176,17 @@ export const getParseResult = async (jobId) => {
 };
 
 // Get asset URL for textures
-export const getAssetUrl = (jobId, filename) => {
-  return `${API_BASE_URL}/parse/assets/${jobId}/${filename}`;
+export const getAssetUrl = (jobId, relOrName) => {
+  const s = String(relOrName || "");
+  // If backend already gave an absolute URL, use it as-is
+  if (/^https?:\/\//i.test(s)) return s;
+  // If it's a rel like "assets/<jobId>/<file>", strip the prefix
+  const marker = `/assets/${jobId}/`;
+  const name = s.includes(marker)
+    ? s.slice(s.indexOf(marker) + marker.length)
+    : s.split("/").pop();
+  // Option B relay path
+  return `${API_BASE_URL}/proofs/${jobId}/${name}`;
 };
 
 // Health check for testing connection

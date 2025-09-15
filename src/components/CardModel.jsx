@@ -1,9 +1,11 @@
-// src/components/CardModel.jsx - COMPLETELY REWRITTEN FOR ACTUAL PARSER OUTPUT
-import { useRef, useMemo } from "react";
+// src/components/CardModel.jsx - FIXED FOR MULTI-CARD DETECTION
+import { useRef, useMemo, useState, useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Text } from "@react-three/drei";
-import EffectOverlay from './EffectOverlay';
-import BaseCard from './BaseCard';
+import { Text, Plane } from "@react-three/drei";
+import * as THREE from "three";
+import { getAssetUrl } from "../api/client";
+import EffectOverlay from "./EffectOverlay";
+import BaseCard from "./BaseCard";
 
 function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   const cardRef = useRef();
@@ -15,8 +17,12 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
 
   // Get card dimensions and convert mm to meters for Three.js
   const cardDimensions = useMemo(() => {
-    const dims = cardData?.dimensions || cardData?.parseResult?.dimensions || 
-                 { width: 89, height: 51, thickness: 0.35 };
+    const dims = cardData?.dimensions ||
+      cardData?.parseResult?.dimensions || {
+        width: 89,
+        height: 51,
+        thickness: 0.35,
+      };
 
     return {
       // Convert mm to meters for Three.js (standard practice)
@@ -26,22 +32,115 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     };
   }, [cardData]);
 
-  // Extract layer data from the adapted structure
-  const layers = useMemo(() => {
-    return cardData?.layers || {};
+  // Prefer flattened maps from adapter; flatten nested shape if needed
+  const maps = useMemo(() => {
+    const m = cardData?.maps || cardData?.parseResult?.maps || {};
+    if (m.albedo_front || m.albedo_back) return m; // already flat
+    const out = {};
+    const push = (side, obj) => {
+      if (!obj) return;
+      Object.entries(obj).forEach(([k, v]) => {
+        if (v) out[`${k}_${side}`] = v;
+      });
+    };
+    push("front", cardData?.parseResult?.maps?.front || cardData?.maps?.front);
+    push("back", cardData?.parseResult?.maps?.back || cardData?.maps?.back);
+    return out;
+  }, [cardData]);
+
+  const [textures, setTextures] = useState({});
+  const [texLoading, setTexLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loader = new THREE.TextureLoader();
+
+    const loadOne = (jobId, rel) =>
+      new Promise((resolve, reject) => {
+        const url = /^https?:\/\//i.test(String(rel))
+          ? String(rel)
+          : getAssetUrl(jobId, rel);
+        loader.load(
+          url,
+          (tex) => {
+            tex.anisotropy = 8;
+            tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+            resolve(tex);
+          },
+          undefined,
+          reject
+        );
+      });
+
+    const run = async () => {
+      try {
+        setTexLoading(true);
+        const entries = Object.entries(maps).filter(
+          ([, v]) => typeof v === "string"
+        );
+        if (!entries.length) {
+          if (!cancelled) setTextures({});
+          return;
+        }
+        const pairs = await Promise.all(
+          entries.map(async ([k, rel]) => [k, await loadOne(jobId, rel)])
+        );
+        if (!cancelled) setTextures(Object.fromEntries(pairs));
+      } catch {
+        if (!cancelled) setTextures({});
+      } finally {
+        if (!cancelled) setTexLoading(false);
+      }
+    };
+
+    if (!jobId || !maps || !Object.keys(maps).length) {
+      setTextures({});
+      return;
+    }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, maps]);
+
+  // Extract layer data - handle multiple cards
+  const { layers, cardsDetected, activeCard } = useMemo(() => {
+    const cards = cardData?.cards || {};
+    const layers = cardData?.layers || {};
+
+    // If we have multiple cards detected, show the first one
+    const cardKeys = Object.keys(cards);
+    let activeCardData = layers;
+    let activeCardKey = "primary";
+
+    if (cardKeys.length > 0) {
+      // Prefer 'front' card, otherwise take first card
+      activeCardKey = cardKeys.includes("front") ? "front" : cardKeys[0];
+      activeCardData = cards[activeCardKey] || {};
+    }
+
+    return {
+      layers: activeCardData,
+      cardsDetected: cardKeys.length,
+      activeCard: activeCardKey,
+    };
   }, [cardData]);
 
   // Get original file name for debugging
   const originalFileName = useMemo(() => {
-    return cardData?.parseResult?.metadata?.originalFile || 
-           cardData?.file?.name || 
-           "Business Card";
+    return (
+      cardData?.parseResult?.metadata?.originalFile ||
+      cardData?.file?.name ||
+      "Business Card"
+    );
   }, [cardData]);
 
   // Count total effect items for logging
   const totalEffects = useMemo(() => {
-    return Object.values(layers).reduce((total, items) => 
-      total + (Array.isArray(items) ? items.length : 0), 0
+    return Object.values(layers).reduce(
+      (total, items) => total + (Array.isArray(items) ? items.length : 0),
+      0
     );
   }, [layers]);
 
@@ -51,6 +150,8 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     dimensions: cardDimensions,
     layerTypes: Object.keys(layers),
     totalEffects: totalEffects,
+    cardsDetected: cardsDetected,
+    activeCard: activeCard,
   });
 
   // Auto rotation animation
@@ -68,12 +169,130 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   return (
     <group ref={cardRef} position={[0, 0, 0]}>
       {/* Base Card */}
+      {/* Base Card */}
       <BaseCard dimensions={cardDimensions} />
-      
-      {/* Effect Layers - render as colored overlays based on bounds */}
-      {showEffects && (
+
+      {/* Albedo planes (front/back) */}
+      {textures.albedo_front && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, cardDimensions.thickness / 2 + 0.0004]}
+        >
+          <meshStandardMaterial
+            map={textures.albedo_front}
+            roughness={0.6}
+            metalness={0.0}
+          />
+        </Plane>
+      )}
+      {textures.albedo_back && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, -cardDimensions.thickness / 2 - 0.0004]}
+          rotation={[0, Math.PI, 0]}
+        >
+          <meshStandardMaterial
+            map={textures.albedo_back}
+            roughness={0.6}
+            metalness={0.0}
+          />
+        </Plane>
+      )}
+
+      {/* Effect mask overlays (front) */}
+      {textures.foil_front && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, cardDimensions.thickness / 2 + 0.0006]}
+        >
+          <meshStandardMaterial
+            map={textures.foil_front}
+            transparent
+            metalness={1.0}
+            roughness={0.2}
+            opacity={0.85}
+          />
+        </Plane>
+      )}
+      {textures.uv_front && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, cardDimensions.thickness / 2 + 0.0007]}
+        >
+          <meshStandardMaterial
+            map={textures.uv_front}
+            transparent
+            metalness={0.0}
+            roughness={0.1}
+            opacity={0.5}
+          />
+        </Plane>
+      )}
+      {textures.emboss_front && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, cardDimensions.thickness / 2 + 0.0008]}
+        >
+          <meshStandardMaterial
+            map={textures.emboss_front}
+            transparent
+            metalness={0.0}
+            roughness={0.6}
+            opacity={0.6}
+          />
+        </Plane>
+      )}
+
+      {/* Effect mask overlays (back) */}
+      {textures.foil_back && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, -cardDimensions.thickness / 2 - 0.0006]}
+          rotation={[0, Math.PI, 0]}
+        >
+          <meshStandardMaterial
+            map={textures.foil_back}
+            transparent
+            metalness={1.0}
+            roughness={0.2}
+            opacity={0.85}
+          />
+        </Plane>
+      )}
+      {textures.uv_back && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, -cardDimensions.thickness / 2 - 0.0007]}
+          rotation={[0, Math.PI, 0]}
+        >
+          <meshStandardMaterial
+            map={textures.uv_back}
+            transparent
+            metalness={0.0}
+            roughness={0.1}
+            opacity={0.5}
+          />
+        </Plane>
+      )}
+      {textures.emboss_back && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, -cardDimensions.thickness / 2 - 0.0008]}
+          rotation={[0, Math.PI, 0]}
+        >
+          <meshStandardMaterial
+            map={textures.emboss_back}
+            transparent
+            metalness={0.0}
+            roughness={0.6}
+            opacity={0.6}
+          />
+        </Plane>
+      )}
+
+      {/* Fallback rectangles (only if no texture maps) */}
+      {showEffects && !Object.keys(textures).length && (
         <>
-          {/* Print Layers (base content) */}
           {layers.print?.map((printItem, index) => (
             <EffectOverlay
               key={`print-${index}`}
@@ -83,8 +302,6 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               zOffset={0.0001 + index * 0.0001}
             />
           ))}
-
-          {/* Foil Effects */}
           {layers.foil?.map((foilItem, index) => (
             <EffectOverlay
               key={`foil-${index}`}
@@ -94,19 +311,15 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               zOffset={0.001 + index * 0.0002}
             />
           ))}
-
-          {/* Spot UV Effects */}
           {layers.spot_uv?.map((uvItem, index) => (
             <EffectOverlay
               key={`uv-${index}`}
               item={uvItem}
               cardDimensions={cardDimensions}
-              effectType="spotUV"
+              effectType="spot_uv"
               zOffset={0.002 + index * 0.0002}
             />
           ))}
-
-          {/* Emboss Effects */}
           {layers.emboss?.map((embossItem, index) => (
             <EffectOverlay
               key={`emboss-${index}`}
@@ -116,8 +329,6 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               zOffset={0.003 + index * 0.0002}
             />
           ))}
-
-          {/* Die Cut Effects */}
           {layers.die_cut?.map((dieItem, index) => (
             <EffectOverlay
               key={`die-${index}`}
@@ -134,11 +345,13 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       {import.meta.env.DEV && (
         <Text
           position={[0, -cardDimensions.height / 2 - 0.02, 0]}
-          fontSize={0.01}
+          fontSize={0.008}
           color="#666666"
           anchorX="center"
         >
-          Effects: {totalEffects} | Job: {jobId ? jobId.slice(0, 8) + '...' : 'N/A'}
+          {cardsDetected > 1
+            ? `Card: ${activeCard} (${cardsDetected} detected)`
+            : `Effects: ${totalEffects}`}
         </Text>
       )}
 
@@ -151,7 +364,19 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
           anchorX="center"
           anchorY="middle"
         >
-          No special effects detected
+          No effects detected in {activeCard} card
+        </Text>
+      )}
+
+      {/* Show multi-card indicator */}
+      {cardsDetected > 1 && (
+        <Text
+          position={[0, cardDimensions.height / 2 + 0.01, 0]}
+          fontSize={0.006}
+          color="#667eea"
+          anchorX="center"
+        >
+          Showing: {activeCard} card ({cardsDetected} cards detected)
         </Text>
       )}
     </group>
@@ -167,7 +392,8 @@ function CardModelPlaceholder({
 
   useFrame((state) => {
     if (meshRef.current && meshRef.current.material) {
-      meshRef.current.material.opacity = 0.5 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
+      meshRef.current.material.opacity =
+        0.5 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
     }
   });
 

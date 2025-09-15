@@ -1,0 +1,152 @@
+/* src/components/CardSelector.css */
+.card-selector {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 15px;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.selector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.selector-label {
+  font-size: 0.9rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.toggle-btn {
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.toggle-btn:hover {
+  background: #5a6fd8;
+}
+
+.selector-content {
+  margin-top: 12px;
+}
+
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.card-option {
+  background: #f8f9fa;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.card-option:hover {
+  background: #e9ecef;
+  border-color: rgba(102, 126, 234, 0.3);
+}
+
+.card-option.active {
+  background: rgba(102, 126, 234, 0.1);
+  border-color: #667eea;
+}
+
+.card-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.card-icon {
+  font-size: 2rem;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
+.card-details h4 {
+  margin: 0 0 4px 0;
+  color: #333;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.card-details p {
+  margin: 2px 0;
+  color: #666;
+  font-size: 0.8rem;
+}
+
+.active-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: #28a745;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.selector-actions {
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+  border-top: 1px solid #e9ecef;
+}
+
+.view-all-btn {
+  background: transparent;
+  color: #667eea;
+  border: 1px solid #667eea;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.view-all-btn:hover {
+  background: #667eea;
+  color: white;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .cards-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  
+  .card-preview {
+    flex-direction: column;
+    text-align: center;
+    gap: 8px;
+  }
+  
+  .selector-header {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  
+  .toggle-btn {
+    align-self: stretch;
+    text-align: center;
+  }
+}

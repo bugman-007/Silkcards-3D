@@ -1,110 +1,184 @@
-// Replace the entire content with:
+// src/api/adapter.js
+/**
+ * Adapt the Windows parser/Illustrator manifest into what the viewer expects.
+ * - Prefer geometry.front/back.size_mm for card size
+ * - Flatten maps to simple keys: albedo_front, foil_front, uv_front, emboss_front (+ _back variants)
+ * - Retain original items and compute light-weight per-side groupings for debugging
+ */
 export function adaptParserJsonToViewer(data) {
   if (!data || typeof data !== "object") {
     throw new Error("adaptParserJsonToViewer: invalid input");
   }
 
-  // Extract dimensions from artboard bounds (in mm)
-  const artboard = data?.doc?.artboards?.[0]?.bounds;
-  const cardDimensions = {
-    width: artboard?.w || 89,
-    height: artboard?.h || 51,
-    thickness: 0.35, // Standard thickness in mm
-    units: "mm",
+  // ----- jobId -----
+  const jobId = data?.job_id || data?.jobId || data?.id || null;
+
+  // ----- geometry preferred size (mm) -----
+  const geomFront = data?.geometry?.front?.size_mm;
+  const geomBack  = data?.geometry?.back?.size_mm;
+  const primary   = geomFront || geomBack;
+
+  // Fallback size from artboard[0] bounds (mm) if geometry missing
+  const ab = data?.doc?.artboards?.[0]?.bounds || {};
+  const widthMmAb  = typeof ab.w === "number" ? ab.w : null;
+  const heightMmAb = typeof ab.h === "number" ? ab.h : null;
+
+  const dims = primary
+    ? { width: primary.w, height: primary.h, thickness: 0.35, units: "mm" }
+    : { width: widthMmAb ?? 90, height: heightMmAb ?? 54, thickness: 0.35, units: "mm" };
+
+  // ----- flatten maps -----
+  const flatMaps = {};
+  const flattenSide = (side, obj) => {
+    if (!obj || typeof obj !== "object") return;
+    Object.entries(obj).forEach(([k, v]) => {
+      if (!v) return;
+      flatMaps[`${k}_${side}`] = v; // e.g. 'albedo_front': 'assets/front_albedo.png'
+    });
   };
+  flattenSide("front", data?.maps?.front);
+  flattenSide("back",  data?.maps?.back);
 
-  // Extract job ID
-  const jobId = data?.job_id || data?._meta?.job_id || null;
+  // ----- light-weight grouping of items (optional for debugger/UI) -----
+  const artboardBounds = data?.doc?.artboards?.[0]?.bounds || null; // mm
+  const items = Array.isArray(data?.items) ? data.items : [];
 
-  // Process items to create effect layers
-  const items = Array.isArray(data.items) ? data.items : [];
+  const grouped = separateCardsFromItems(items, artboardBounds);
 
-  // Group items by finish type and side
-  const effectLayers = {
-    foil: [],
-    spot_uv: [],
-    emboss: [],
-    print: [],
-    die_cut: [],
-  };
-
-  // Process each item
-  items.forEach((item, index) => {
-    const layerPath = item.layerPath || [];
-    const finish = item.finish || "print";
-    const itemData = {
-      id: `item_${index}`,
-      name: item.name || `Layer ${index}`,
-      bounds: item.bounds || null,
-      layerPath: layerPath,
-      finish: finish,
-      side: layerPath[0]?.toLowerCase().includes("front")
-        ? "front"
-        : layerPath[0]?.toLowerCase().includes("back")
-        ? "back"
-        : "front",
-    };
-
-    // Categorize by finish type
-    if (finish === "print") {
-      effectLayers.print.push(itemData);
-    } else {
-      // Extract finish type from layer path
-      const layerName = layerPath.join("_").toLowerCase();
-      if (layerName.includes("foil")) {
-        effectLayers.foil.push({
-          ...itemData,
-          color: extractFoilColor(layerName),
-        });
-      } else if (layerName.includes("uv") || layerName.includes("spot")) {
-        effectLayers.spot_uv.push(itemData);
-      } else if (layerName.includes("emboss") || layerName.includes("deboss")) {
-        effectLayers.emboss.push({
-          ...itemData,
-          mode: layerName.includes("deboss") ? "deboss" : "emboss",
-        });
-      }
-    }
-  });
-
-  // Create the expected structure
+  // Build the final adapted shape
   const adapted = {
     jobId,
     id: jobId,
-    dimensions: cardDimensions,
-
-    // For compatibility with existing code
+    dimensions: dims,
+    maps: flatMaps,
+    geometry: data?.geometry || {},
+    // Keep a parseResult node so legacy code can access the same fields
     parseResult: {
       jobId,
-      dimensions: cardDimensions,
-      maps: {}, // No texture maps from this parser
-      parsing: {
-        method: "OCG Layer Extraction",
-        confidence: items.length > 0 ? 0.95 : 0.5,
-      },
-      metadata: {
-        originalFile: data?._meta?.input_file || "Unknown file",
-        totalItems: items.length,
-        processingTime: data?._meta?.elapsed_sec * 1000 || 0,
-      },
+      dimensions: dims,
+      maps: flatMaps,
+      geometry: data?.geometry || {}
     },
-
-    // Processed layer data for 3D rendering
-    layers: effectLayers,
-
-    // Keep original for debugging
-    original: data,
+    // Expose grouped items for debugging/overlays (not required for texture path)
+    cards: grouped,
+    layers: grouped.front || grouped.back || {}, // default selected group-ish
+    original: data
   };
 
   return adapted;
 }
 
-function extractFoilColor(layerName) {
-  if (layerName.includes("gold")) return "gold";
-  if (layerName.includes("silver")) return "silver";
-  if (layerName.includes("copper")) return "copper";
-  if (layerName.includes("rose")) return "rose_gold";
-  if (layerName.includes("hot_pink")) return "hot_pink";
-  if (layerName.includes("teal")) return "teal";
-  return "gold"; // default
+/* ----------------------------- helpers below ----------------------------- */
+
+/**
+ * Separate items into card "front"/"back" buckets and effect arrays.
+ * Each bucket has: print[], foil[], spot_uv[], emboss[], die_cut[], __meta.size_mm
+ */
+function separateCardsFromItems(items, artboardBounds) {
+  const buckets = {
+    front: mkBucket(),
+    back:  mkBucket()
+  };
+
+  // Pre-compute artboard center X in mm for fallback side detection
+  const abCenterMm = (artboardBounds && typeof artboardBounds.x === "number")
+    ? (artboardBounds.x + (artboardBounds.x2 ?? (artboardBounds.x + (artboardBounds.w || 0)))) / 2
+    : null;
+
+  // Collect union bounds per side to compute size_mm later
+  const union = { front: null, back: null };
+  const addToUnion = (side, b) => {
+    if (!b) return;
+    const u = union[side];
+    if (!u) {
+      union[side] = { minX: b.x, minY: b.y, maxX: b.x2 ?? (b.x + b.w), maxY: b.y2 ?? (b.y + b.h) };
+    } else {
+      u.minX = Math.min(u.minX, b.x);
+      u.minY = Math.min(u.minY, b.y);
+      u.maxX = Math.max(u.maxX, (b.x2 ?? (b.x + b.w)));
+      u.maxY = Math.max(u.maxY, (b.y2 ?? (b.y + b.h)));
+    }
+  };
+
+  for (const raw of items) {
+    const side = sideOf(raw, abCenterMm);
+    const fin  = (raw?.finish || finishFromLayer(raw?.layerPath)).toLowerCase();
+    const bucket = buckets[side] || buckets.front;
+
+    const b = normalizeBounds(raw?.bounds);
+    addToUnion(side, b);
+
+    bucket[getEffectKey(fin)].push({
+      id: raw?.id ?? undefined,
+      name: raw?.name || "",
+      bounds: b,
+      layerPath: Array.isArray(raw?.layerPath) ? raw.layerPath : [],
+      finish: fin
+    });
+  }
+
+  // Attach per-side size_mm meta (if we saw anything)
+  ["front","back"].forEach(side => {
+    const u = union[side];
+    if (u) buckets[side].__meta = { size_mm: { w: (u.maxX - u.minX), h: (u.maxY - u.minY) }, origin_mm: { x: u.minX, y: u.minY } };
+  });
+
+  return buckets;
+}
+
+function mkBucket() {
+  return { print: [], foil: [], spot_uv: [], emboss: [], deboss: [], die_cut: [], __meta: null };
+}
+
+function getEffectKey(fin) {
+  switch (fin) {
+    case "foil": return "foil";
+    case "uv":
+    case "spot_uv":
+    case "spot-uv":
+    case "spotuv": return "spot_uv";
+    case "emboss": return "emboss";
+    case "deboss": return "deboss";
+    case "die":
+    case "die_cut":
+    case "die-cut":
+    case "diecut": return "die_cut";
+    default: return "print";
+  }
+}
+
+function normalizeBounds(b) {
+  if (!b || typeof b !== "object") return null;
+  const x = num(b.x), y = num(b.y);
+  const w = num(b.w ?? b.width), h = num(b.h ?? b.height);
+  const x2 = num(b.x2 ?? (isFinite(x) && isFinite(w) ? x + w : undefined));
+  const y2 = num(b.y2 ?? (isFinite(y) && isFinite(h) ? y + h : undefined));
+  return { x, y, w, h, x2, y2, width: w, height: h };
+}
+
+function num(v) { return (typeof v === "number" && isFinite(v)) ? v : undefined; }
+
+function finishFromLayer(layerPath) {
+  const lp = (Array.isArray(layerPath) ? layerPath.join("_") : String(layerPath || "")).toLowerCase();
+  if (lp.includes("foil")) return "foil";
+  if (lp.includes("spot_uv") || lp.includes("spot-uv") || lp.includes("spotuv") || lp.includes("uv")) return "spot_uv";
+  if (lp.includes("emboss")) return "emboss";
+  if (lp.includes("deboss")) return "deboss";
+  if (lp.includes("die") && lp.includes("cut")) return "die_cut";
+  return "print";
+}
+
+function sideOf(item, abCenterMm) {
+  // Prefer explicit side token on the TOP layer (first in path)
+  const top = Array.isArray(item?.layerPath) && item.layerPath.length ? String(item.layerPath[0]).toLowerCase() : "";
+  if (top.includes("front")) return "front";
+  if (top.includes("back"))  return "back";
+
+  // Fallback: compare item left to artboard center
+  const left = (item?.bounds && typeof item.bounds.x === "number") ? item.bounds.x : undefined;
+  if (typeof left === "number" && typeof abCenterMm === "number") {
+    return left < abCenterMm ? "front" : "back";
+  }
+  // Default
+  return "front";
 }
