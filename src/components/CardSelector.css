@@ -1,12 +1,5 @@
 /* src/components/CardSelector.css */
-.card-selector {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 15px;
-  border: 1px solid rgba(102, 126, 234, 0.2);
-}
+.card-selector { background: #fafafa; border-radius: 8px; padding: 12px; margin-bottom: 15px; border: 1px solid #efefef; }
 
 .selector-header {
   display: flex;
@@ -15,26 +8,11 @@
   margin-bottom: 8px;
 }
 
-.selector-label {
-  font-size: 0.9rem;
-  color: #666;
-  font-weight: 500;
-}
+.selector-label { font-size: 0.9rem; color: #333; font-weight: 600; }
 
-.toggle-btn {
-  background: #667eea;
-  color: white;
-  border: none;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  cursor: pointer;
-  transition: background 0.3s ease;
-}
+.toggle-btn { background: #111; color: white; border: 1px solid #111; padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; cursor: pointer; transition: opacity 0.2s ease; }
 
-.toggle-btn:hover {
-  background: #5a6fd8;
-}
+.toggle-btn:hover { opacity: 0.9; }
 
 .selector-content {
   margin-top: 12px;
@@ -47,25 +25,11 @@
   margin-bottom: 12px;
 }
 
-.card-option {
-  background: #f8f9fa;
-  border: 2px solid transparent;
-  border-radius: 8px;
-  padding: 12px;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  position: relative;
-}
+.card-option { background: #f8f8f8; border: 1px solid transparent; border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.2s ease; position: relative; }
 
-.card-option:hover {
-  background: #e9ecef;
-  border-color: rgba(102, 126, 234, 0.3);
-}
+.card-option:hover { background: #f2f2f2; border-color: #e6e6e6; }
 
-.card-option.active {
-  background: rgba(102, 126, 234, 0.1);
-  border-color: #667eea;
-}
+.card-option.active { background: #fff; border-color: #111; }
 
 .card-preview {
   display: flex;
@@ -78,30 +42,11 @@
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
 }
 
-.card-details h4 {
-  margin: 0 0 4px 0;
-  color: #333;
-  font-size: 1rem;
-  font-weight: 600;
-}
+.card-details h4 { margin: 0 0 4px 0; color: #111; font-size: 1rem; font-weight: 700; }
 
-.card-details p {
-  margin: 2px 0;
-  color: #666;
-  font-size: 0.8rem;
-}
+.card-details p { margin: 2px 0; color: #333; font-size: 0.8rem; }
 
-.active-indicator {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: #28a745;
-  color: white;
-  padding: 2px 6px;
-  border-radius: 10px;
-  font-size: 0.7rem;
-  font-weight: 600;
-}
+.active-indicator { position: absolute; top: 8px; right: 8px; background: #111; color: white; padding: 2px 6px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; }
 
 .selector-actions {
   display: flex;
@@ -110,21 +55,9 @@
   border-top: 1px solid #e9ecef;
 }
 
-.view-all-btn {
-  background: transparent;
-  color: #667eea;
-  border: 1px solid #667eea;
-  padding: 8px 16px;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
+.view-all-btn { background: transparent; color: #111; border: 1px solid #111; padding: 8px 16px; border-radius: 4px; font-size: 0.9rem; cursor: pointer; transition: opacity 0.2s ease; }
 
-.view-all-btn:hover {
-  background: #667eea;
-  color: white;
-}
+.view-all-btn:hover { background: #111; color: white; }
 
 /* Responsive */
 @media (max-width: 768px) {

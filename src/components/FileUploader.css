@@ -8,13 +8,13 @@
 
 /* Upload Zone */
 .upload-zone {
-  border: 3px dashed #ddd;
-  border-radius: 16px;
-  padding: 50px 40px;
+  border: 1px dashed #d9d9d9;
+  border-radius: 12px;
+  padding: 40px 32px;
   text-align: center;
   cursor: pointer;
-  transition: all 0.3s ease;
-  background: linear-gradient(135deg, #fafafa 0%, #f8f9fa 100%);
+  transition: all 0.2s ease;
+  background: #fff;
   position: relative;
   overflow: hidden;
 }
@@ -31,23 +31,13 @@
   transition: opacity 0.3s ease;
 }
 
-.upload-zone:hover {
-  border-color: #667eea;
-  background: linear-gradient(135deg, #f0f2ff 0%, #e8ecff 100%);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
-}
+.upload-zone:hover { border-color: #111; background: #fafafa; }
 
 .upload-zone:hover::before {
   opacity: 1;
 }
 
-.upload-zone.dragging {
-  border-color: #667eea;
-  background: linear-gradient(135deg, #e8ecff 0%, #dde4ff 100%);
-  transform: scale(1.02);
-  box-shadow: 0 12px 35px rgba(102, 126, 234, 0.25);
-}
+.upload-zone.dragging { border-color: #111; background: #f2f2f2; }
 
 .upload-zone.dragging::before {
   opacity: 1;
@@ -59,19 +49,9 @@
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.1));
 }
 
-.upload-zone h3 {
-  color: #333;
-  margin-bottom: 12px;
-  font-size: 1.6rem;
-  font-weight: 600;
-  letter-spacing: -0.5px;
-}
+.upload-zone h3 { color: #111; margin-bottom: 12px; font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em; }
 
-.upload-zone p {
-  color: #666;
-  margin-bottom: 30px;
-  font-size: 1.1rem;
-}
+.upload-zone p { color: #555; margin-bottom: 24px; font-size: 1rem; }
 
 .supported-formats {
   display: grid;
@@ -82,12 +62,7 @@
   color: #888;
 }
 
-.supported-formats span {
-  padding: 8px 12px;
-  background: rgba(102, 126, 234, 0.1);
-  border-radius: 20px;
-  font-weight: 500;
-}
+.supported-formats span { padding: 8px 12px; background: #f2f2f2; border-radius: 18px; font-weight: 600; color: #111; border: 1px solid #e6e6e6; }
 
 .upload-features {
   display: flex;
@@ -114,49 +89,20 @@
 }
 
 /* File Selected Area */
-.file-selected {
-  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-  border-radius: 16px;
-  padding: 40px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e9ecef;
-}
+.file-selected { background: #fff; border-radius: 12px; padding: 32px; border: 1px solid #e9e9e9; box-shadow: none; }
 
-.file-info {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  margin-bottom: 30px;
-  padding: 20px;
-  background: rgba(102, 126, 234, 0.05);
-  border-radius: 12px;
-  border: 1px solid rgba(102, 126, 234, 0.1);
-}
+.file-info { display: flex; align-items: center; gap: 20px; margin-bottom: 24px; padding: 16px; background: #fafafa; border-radius: 10px; border: 1px solid #efefef; }
 
 .file-icon-large {
   font-size: 3rem;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
 }
 
-.file-details h4 {
-  color: #333;
-  margin-bottom: 6px;
-  font-size: 1.3rem;
-  font-weight: 600;
-  max-width: 400px;
-  word-break: break-word;
-}
+.file-details h4 { color: #111; margin-bottom: 6px; font-size: 1.1rem; font-weight: 700; max-width: 400px; word-break: break-word; }
 
-.file-details p {
-  color: #666;
-  font-size: 0.95rem;
-  margin-bottom: 4px;
-}
+.file-details p { color: #333; font-size: 0.95rem; margin-bottom: 4px; }
 
-.file-size {
-  font-weight: 600;
-  color: #667eea;
-}
+.file-size { font-weight: 700; color: #111; }
 
 .file-type {
   color: #888;
@@ -192,28 +138,16 @@
   overflow: hidden;
 }
 
-.upload-btn.primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-}
+.upload-btn.primary { background: #111; color: #fff; }
 
 .upload-btn.primary:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5);
 }
 
-.cancel-btn, .reset-btn {
-  background: transparent;
-  color: #666;
-  border: 2px solid #ddd;
-}
+.cancel-btn, .reset-btn { background: transparent; color: #111; border: 1px solid #e6e6e6; }
 
-.cancel-btn:hover, .reset-btn:hover {
-  border-color: #667eea;
-  color: #667eea;
-  background: rgba(102, 126, 234, 0.05);
-}
+.cancel-btn:hover, .reset-btn:hover { border-color: #111; color: #111; background: #f2f2f2; }
 
 .retry-btn.primary {
   background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
@@ -221,11 +155,7 @@
   box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
 }
 
-.view-3d-btn {
-  background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%);
-  color: white;
-  box-shadow: 0 4px 15px rgba(23, 162, 184, 0.4);
-}
+.view-3d-btn { background: #000; color: #fff; }
 
 /* Progress Indicators */
 .upload-progress {
@@ -246,41 +176,17 @@
   margin: 0;
 }
 
-.progress-percentage {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: #667eea;
-  background: rgba(102, 126, 234, 0.1);
-  padding: 4px 12px;
-  border-radius: 20px;
-}
+.progress-percentage { font-size: 1.1rem; font-weight: 700; color: #111; background: #f2f2f2; padding: 4px 10px; border-radius: 20px; }
 
-.progress-container {
-  width: 100%;
-  height: 8px;
-  background: #e9ecef;
-  border-radius: 10px;
-  overflow: hidden;
-  margin-bottom: 16px;
-}
+.progress-container { width: 100%; height: 6px; background: #efefef; border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
 
-.progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-  border-radius: 10px;
-  transition: width 0.3s ease;
-  position: relative;
-}
+.progress-bar { height: 100%; background: #111; border-radius: 10px; transition: width 0.3s ease; position: relative; }
 
 .progress-bar.pulse {
   animation: pulse 2s infinite;
 }
 
-.progress-bar.parsing-animation {
-  background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #667eea 100%);
-  background-size: 200% 100%;
-  animation: parsing-flow 2s infinite linear;
-}
+.progress-bar.parsing-animation { background: linear-gradient(90deg, #000 0%, #222 50%, #000 100%); background-size: 200% 100%; animation: parsing-flow 2s infinite linear; }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -299,20 +205,9 @@
   font-weight: 500;
 }
 
-.technical-details, .technical-info {
-  margin-top: 16px;
-  padding: 12px;
-  background: rgba(102, 126, 234, 0.05);
-  border-radius: 8px;
-  border: 1px solid rgba(102, 126, 234, 0.1);
-}
+.technical-details, .technical-info { margin-top: 16px; padding: 12px; background: #fafafa; border-radius: 8px; border: 1px solid #efefef; }
 
-.technical-details small, .technical-info small {
-  display: block;
-  color: #667eea;
-  font-size: 0.85rem;
-  margin-bottom: 4px;
-}
+.technical-details small, .technical-info small { display: block; color: #333; font-size: 0.85rem; margin-bottom: 4px; }
 
 /* Parsing Steps */
 .parsing-details {
@@ -362,16 +257,9 @@
   position: relative;
 }
 
-.step.active .step-icon {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  transform: scale(1.1);
-}
+.step.active .step-icon { background: #111; color: white; transform: scale(1.05); }
 
-.step.completed .step-icon {
-  background: #28a745;
-  color: white;
-}
+.step.completed .step-icon { background: #000; color: white; }
 
 .step span:last-child {
   font-size: 0.8rem;
@@ -380,15 +268,9 @@
   text-align: center;
 }
 
-.step.active span:last-child {
-  color: #667eea;
-  font-weight: 600;
-}
+.step.active span:last-child { color: #111; font-weight: 700; }
 
-.step.completed span:last-child {
-  color: #28a745;
-  font-weight: 600;
-}
+.step.completed span:last-child { color: #000; font-weight: 700; }
 
 /* Success State */
 .upload-success {
@@ -405,20 +287,9 @@
   filter: drop-shadow(0 4px 8px rgba(40, 167, 69, 0.3));
 }
 
-.success-header h4 {
-  color: #28a745;
-  font-size: 1.4rem;
-  font-weight: 600;
-  margin: 0;
-}
+.success-header h4 { color: #111; font-size: 1.2rem; font-weight: 700; margin: 0; }
 
-.processing-stats {
-  background: linear-gradient(135deg, rgba(40, 167, 69, 0.05) 0%, rgba(32, 201, 151, 0.05) 100%);
-  border: 1px solid rgba(40, 167, 69, 0.1);
-  border-radius: 12px;
-  padding: 24px;
-  margin-bottom: 24px;
-}
+.processing-stats { background: #fafafa; border: 1px solid #efefef; border-radius: 12px; padding: 24px; margin-bottom: 24px; }
 
 .stat-grid {
   display: grid;

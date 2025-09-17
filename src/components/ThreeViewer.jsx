@@ -150,7 +150,9 @@ export default function ThreeViewer({ cardData }) {
           <PerspectiveCamera
             makeDefault
             position={[0, 0, 0.2]} // Closer for business card scale
-            fov={50}
+            fov={40}
+            near={0.001}
+            far={10}
           />
 
           {/* Lighting Setup */}
@@ -175,7 +177,7 @@ export default function ThreeViewer({ cardData }) {
 
           {/* Camera Controls */}
           <OrbitControls
-            enablePan={true}
+            enablePan={false}
             enableZoom={true}
             enableRotate={true}
             minDistance={0.05}

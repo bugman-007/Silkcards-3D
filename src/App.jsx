@@ -75,23 +75,28 @@ function App() {
 
   return (
     <div className="App">
-      <header className="app-header">
-        <h1>SilkCards 3D Preview Tool</h1>
-        <p>Upload your AI/PDF file to see a realistic 3D preview</p>
-      </header>
-      
-      <main className="main-content">
-        {!uploadedData ? (
-          // Upload Phase
+      {!uploadedData ? (
+        // Upload Phase - Full screen
+        <div className="upload-screen">
+          <header className="app-header">
+            <h1>Revolve 360</h1>
+            <p>Upload your AI/PDF file to see a realistic 3D preview</p>
+          </header>
+          
           <div className="upload-area">
             <HealthCheck />
             <FileUploader onFileUpload={handleFileUpload} />
           </div>
-        ) : (
-          // Preview Phase
-          <div className="preview-area">
-            {/* Navigation */}
-            <div className="preview-nav">
+        </div>
+      ) : (
+        // Preview Phase - Maximized viewer with overlays
+        <div className="preview-screen">
+          {/* Fixed Top Navigation Overlay */}
+          <div className="top-nav-overlay">
+            <div className="nav-brand">
+              <h1>SilkCards 3D</h1>
+            </div>
+            <div className="nav-controls">
               <button
                 className={`nav-btn ${!showAnalysis ? 'active' : ''}`}
                 onClick={() => setShowAnalysis(false)}
@@ -108,17 +113,20 @@ function App() {
                 className="nav-btn reset-btn"
                 onClick={resetUpload}
               >
-                🔄 Upload New File
+                🔄 Upload New
               </button>
             </div>
+          </div>
 
-            {/* Content */}
+          {/* Full Screen Viewer */}
+          <div className="fullscreen-viewer">
             {!showAnalysis ? (
-              // 3D Preview View
-              <div className="preview-content">
+              // 3D Preview View - Full screen with overlays
+              <div className="viewer-container">
                 <ThreeViewer cardData={uploadedData} />
                 
-                <div className="preview-actions">
+                {/* Floating Action Buttons */}
+                <div className="floating-actions">
                   <button 
                     className="action-btn primary"
                     onClick={handleGenerateShare}
@@ -131,10 +139,18 @@ function App() {
                 </div>
               </div>
             ) : (
-              // Analysis View - UPDATED for multi-card structure
-              <div className="analysis-content">
-                <div className="analysis-card">
-                  <h3>File Analysis Results</h3>
+              // Analysis View - Full screen overlay
+              <div className="analysis-overlay">
+                <div className="analysis-content">
+                  <div className="analysis-header">
+                    <h3>File Analysis Results</h3>
+                    <button 
+                      className="close-analysis-btn"
+                      onClick={() => setShowAnalysis(false)}
+                    >
+                      ✕
+                    </button>
+                  </div>
                   <div className="analysis-details">
                     <div className="detail-group">
                       <h4>📁 File Information</h4>
@@ -239,16 +255,16 @@ function App() {
               </div>
             )}
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Share Modal */}
-        {showShareModal && (
-          <ShareModal 
-            cardData={uploadedData}
-            onClose={() => setShowShareModal(false)}
-          />
-        )}
-      </main>
+      {/* Share Modal */}
+      {showShareModal && (
+        <ShareModal 
+          cardData={uploadedData}
+          onClose={() => setShowShareModal(false)}
+        />
+      )}
     </div>
   )
 }
