@@ -27,7 +27,31 @@ RUN_WRAPPER = os.path.join(DIR_SCRIPTS, "run_job.jsx")
 RUNTIME_JOB_JSX = os.path.join(DIR_RUNTIME, "job.jsx")
 
 ASSETS_BASE = os.path.join(DIR_RESULTS, "assets")
-PUBLIC_ORIGIN = os.environ.get("PUBLIC_ORIGIN", "https://revolve360.vercel.app")
+# add near the top
+ALLOWED_ORIGINS = set(
+    os.environ.get("ALLOWED_ORIGINS",
+                   "http://localhost:5173,http://127.0.0.1:5173,https://revolve360.vercel.app"
+                  ).split(",")
+)
+PUBLIC_ORIGIN = "*"
+
+def _asset_response(full_path):
+    ctype = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+    resp = make_response(send_file(full_path, mimetype=ctype, conditional=True))
+    # allow current origin if whitelisted, else be permissive for images
+    origin = request.headers.get("Origin") or ""
+    resp.headers["Access-Control-Allow-Origin"] = origin if origin in ALLOWED_ORIGINS else "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*,x-requested-with"
+    resp.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    resp.headers["Timing-Allow-Origin"] = "*"
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    st = os.stat(full_path)
+    resp.headers["ETag"] = f'W/"{st.st_size:x}-{int(st.st_mtime)}"'
+    resp.headers["Last-Modified"] = datetime.utcfromtimestamp(st.st_mtime).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    resp.headers["Vary"] = "Origin"
+    return resp
+
 
 # ---------------- Ensure directories exist ----------------
 for d in [DIR_RUNTIME, DIR_INCOMING, DIR_PROCESSED, DIR_RESULTS, DIR_FAILED]:
@@ -110,6 +134,20 @@ def _now():
 
 
 # ---------------- Routes ----------------
+
+@app.route("/assets/<job_id>/<path:filename>", methods=["GET", "OPTIONS"])
+def public_get_asset(job_id, filename):
+    if request.method == "OPTIONS":
+        return _asset_response(os.path.join(ASSETS_BASE, job_id, filename))  # headers only
+    folder = os.path.join(ASSETS_BASE, job_id)
+    full = safe_join(folder, filename)
+    if not full or not os.path.exists(full):
+        return jsonify({"error": "not_found"}), 404
+    # optional: restrict to image/vector types
+    if not (filename.lower().endswith(".png") or filename.lower().endswith(".svg")):
+        return jsonify({"error": "forbidden"}), 403
+    return _asset_response(full)
+
 @app.get("/internal/assets/<job_id>/<path:filename>")
 def internal_get_asset(job_id, filename):
     # Only backend may call this; enforce shared key + SG allowlist (backend egress IP)
@@ -131,7 +169,9 @@ def internal_get_asset(job_id, filename):
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     st = os.stat(full)
     resp.headers["ETag"] = f'W/"{st.st_size:x}-{int(st.st_mtime)}"'
-    resp.headers["Last-Modified"] = datetime.utcfromtimestamp(st.st_mtime).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    resp.headers["Last-Modified"] = datetime.utcfromtimestamp(st.st_mtime).strftime(
+        "%a, %d %b %Y %H:%M:%S GMT"
+    )
     resp.headers["Accept-Ranges"] = "bytes"
     return resp
 
@@ -207,6 +247,45 @@ def parse():
         # Read and return JSON
         with open(result_path, "r", encoding="utf-8") as jf:
             data = jf.read()
+        try:
+            m = json.loads(data)
+            rel_base = m.get("assets_rel_base", "").replace("/", os.sep)
+            needed = []
+
+            def add_maps(side_key):
+                cards = m.get("maps", {}).get(side_key + "_cards", [])
+                for c in cards:
+                    maps = (c or {}).get("maps", {}) or {}
+                    for k in ("albedo", "uv", "foil", "emboss", "die_png"):
+                        if maps.get(k):
+                            needed.append(maps[k])
+                # v2 fallback if no cards
+                v2 = m.get("maps", {}).get(side_key, {})
+                if v2:
+                    for k in ("albedo", "uv", "foil", "emboss"):
+                        if v2.get(k):
+                            needed.append(v2[k])
+
+            add_maps("front")
+            add_maps("back")
+
+            # normalize and check on disk
+            missing = []
+            for rel in needed:
+                rel = str(rel).replace("/", os.sep)
+                # strip leading "assets/<jobId>/" if present
+                rel = rel.split("assets" + os.sep + job_id + os.sep)[-1]
+                full = os.path.join(ASSETS_BASE, job_id, rel)
+                if not os.path.exists(full) or os.path.getsize(full) == 0:
+                    missing.append(full)
+
+            if missing:
+                log.error(f"[{job_id}] missing assets: {missing}")
+                raise RuntimeError("export produced JSON but textures missing on disk")
+
+        except Exception as _e:
+            # Bubble as server error; caller will retry / you can inspect logs
+            raise
         log.info(f"[{job_id}] success -> {result_path} ({len(data)} bytes)")
         return app.response_class(data, mimetype="application/json")
 

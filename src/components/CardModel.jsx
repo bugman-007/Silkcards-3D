@@ -12,7 +12,8 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
 
   // Extract data from the adapted structure
   const jobId = useMemo(() => {
-    return cardData?.jobId || cardData?.id || null;
+    const pr = cardData?.parseResult || {};
+    return cardData?.jobId || pr.job_id || cardData?.id || null;
   }, [cardData]);
 
   // Get card dimensions and convert mm to meters for Three.js
@@ -32,19 +33,47 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     };
   }, [cardData]);
 
-  // Prefer flattened maps from adapter; flatten nested shape if needed
+  // v3-aware maps flattener (supports v2 fallback)
   const maps = useMemo(() => {
-    const m = cardData?.maps || cardData?.parseResult?.maps || {};
-    if (m.albedo_front || m.albedo_back) return m; // already flat
+    const pr = cardData?.parseResult || {};
+    const baseMaps = pr.maps || cardData?.maps || {};
+
+    // Helper: pick first card's maps for a side (v3)
+    const firstCardMaps = (side) => {
+      const arr = baseMaps?.[`${side}_cards`];
+      if (Array.isArray(arr) && arr.length > 0) return arr[0]?.maps || null;
+      return null;
+    };
+
     const out = {};
-    const push = (side, obj) => {
-      if (!obj) return;
-      Object.entries(obj).forEach(([k, v]) => {
+
+    // v3 path – use per-card maps when present
+    const f3 = firstCardMaps("front");
+    const b3 = firstCardMaps("back");
+    if (f3 || b3) {
+      const push = (side, m) => {
+        if (!m) return;
+        if (m.albedo) out[`albedo_${side}`] = m.albedo;
+        if (m.uv) out[`uv_${side}`] = m.uv;
+        if (m.foil) out[`foil_${side}`] = m.foil;
+        if (m.emboss) out[`emboss_${side}`] = m.emboss;
+        // die mask (PNG) – we’ll use it as alphaMap
+        if (m.die_png) out[`die_${side}`] = m.die_png;
+      };
+      push("front", f3);
+      push("back", b3);
+      return out;
+    }
+
+    // v2 fallback (legacy maps.front/back)
+    const pushV2 = (side, m) => {
+      if (!m) return;
+      Object.entries(m).forEach(([k, v]) => {
         if (v) out[`${k}_${side}`] = v;
       });
     };
-    push("front", cardData?.parseResult?.maps?.front || cardData?.maps?.front);
-    push("back", cardData?.parseResult?.maps?.back || cardData?.maps?.back);
+    pushV2("front", baseMaps.front);
+    pushV2("back", baseMaps.back);
     return out;
   }, [cardData]);
 
@@ -54,21 +83,36 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   useEffect(() => {
     let cancelled = false;
     const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin('anonymous');
 
-    const loadOne = (jobId, rel) =>
+    const normalizeRel = (jid, relPath) => {
+      if (typeof relPath === "string" && relPath.startsWith("assets/")) {
+        const re = new RegExp(`^assets\\/${jid}\\/`);
+        return relPath.replace(re, "").replace(/^assets\/[^/]+\//, "");
+      }
+      return relPath;
+    };
+
+    const loadOne = (jid, relPath) =>
       new Promise((resolve, reject) => {
-        const url = /^https?:\/\//i.test(String(rel))
-          ? String(rel)
-          : getAssetUrl(jobId, rel);
+        const rel = String(relPath || "");
+        const normalized = normalizeRel(jid, rel);
+        const url = /^https?:\/\//i.test(normalized)
+          ? normalized
+          : getAssetUrl(jid, normalized);
+
         loader.load(
           url,
           (tex) => {
-            tex.anisotropy = 8;
-            tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+            // ensure correct color space for albedo/masks
+            if (tex && tex.isTexture) {
+              tex.colorSpace = THREE.SRGBColorSpace; // R3F/Three r152+
+              tex.anisotropy = 8;
+            }
             resolve(tex);
           },
           undefined,
-          reject
+          (err) => reject(err)
         );
       });
 
@@ -169,7 +213,6 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   return (
     <group ref={cardRef} position={[0, 0, 0]}>
       {/* Base Card */}
-      {/* Base Card */}
       <BaseCard dimensions={cardDimensions} />
 
       {/* Albedo planes (front/back) */}
@@ -180,6 +223,8 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         >
           <meshStandardMaterial
             map={textures.albedo_front}
+            alphaMap={textures.die_front || undefined}
+            transparent={!!textures.die_front}
             roughness={0.6}
             metalness={0.0}
           />
@@ -193,6 +238,8 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         >
           <meshStandardMaterial
             map={textures.albedo_back}
+            alphaMap={textures.die_back || undefined}
+            transparent={!!textures.die_back}
             roughness={0.6}
             metalness={0.0}
           />

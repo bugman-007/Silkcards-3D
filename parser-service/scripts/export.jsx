@@ -10,7 +10,7 @@
       .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"')
       .replace(/\r/g, "\\r")
-      .replace(/\n/g, "\\n");
+      .replace(/\n/g, "\\n"); 
   }
   function stringify(v) {
     if (v === null || v === undefined) return "null";
@@ -42,12 +42,6 @@
     f.open("w");
     f.write(stringify(obj));
     f.close();
-  }
-  function firstVisibleLayer(docX) {
-    for (var i = 0; i < docX.layers.length; i++) {
-      if (docX.layers[i].visible) return docX.layers[i];
-    }
-    return docX.layers[0];
   }
   function getenv(k) {
     try {
@@ -88,16 +82,6 @@
   var doc = app.open(inFile);
 
   // ---------- helpers over Illustrator DOM ----------
-  function boundsInfo(b) {
-    return {
-      x: mm2user(b[0]),
-      y: mm2user(-b[1]),
-      x2: mm2user(b[2]),
-      y2: mm2user(-b[3]),
-      w: mm2user(b[2] - b[0]),
-      h: mm2user(b[1] - b[3]),
-    };
-  }
   function mm2user(pt) {
     return pt2mm(pt);
   } // keep output in mm for manifest
@@ -111,31 +95,47 @@
     if (s.indexOf("back") >= 0) return "back";
     return null;
   }
+  function cardIndexFromTopName(top) {
+    var m = /_(\d+)/.exec(String(top).toLowerCase());
+    return m ? Number(m[1]) : 0; // default 0 if none
+  }
+  function cardPrefix(side, idx) {
+    return side + "_layer_" + idx; // e.g. "front_layer_0"
+  }
   function classifyFinishFromName(name) {
     var s = toLowerStr(name);
-    if (s.indexOf("_foil_") >= 0 || s.indexOf("foil") >= 0) return "foil";
-    if (s.indexOf("spot_uv") >= 0 || s.indexOf("uv") >= 0) return "uv";
+    // Die / cut lines first
     if (
-      s.indexOf("spot_uv") >= 0 ||
-      s.indexOf("spotuv") >= 0 ||
-      s.indexOf("spot-uv") >= 0 ||
-      s.indexOf("uv") >= 0 ||
-      s.indexOf("varnish") >= 0 ||
-      s.indexOf("gloss") >= 0 ||
-      s.indexOf("matte") >= 0 ||
-      s.indexOf("lamination") >= 0 ||
-      s.indexOf("raised_uv") >= 0
+      s.indexOf("laser_cut") >= 0 ||
+      s.indexOf("laser-cut") >= 0 ||
+      s.indexOf("laser") >= 0
     )
-      return "uv";
-    if (s.indexOf("foil") >= 0) return "foil";
-    if (s.indexOf("emboss") >= 0) return "emboss";
-    if (s.indexOf("deboss") >= 0) return "deboss";
+      return "die";
+    if (s.indexOf("cutline") >= 0 || s.indexOf("cut_line") >= 0) return "die";
     if (
       s.indexOf("die_cut") >= 0 ||
       s.indexOf("diecut") >= 0 ||
       s.indexOf("die-cut") >= 0
     )
       return "die";
+
+    // Effects
+    if (s.indexOf("emboss") >= 0) return "emboss";
+    if (s.indexOf("deboss") >= 0) return "deboss";
+    if (s.indexOf("foil") >= 0 || s.indexOf("_foil_") >= 0) return "foil";
+    if (
+      s.indexOf("raised_uv") >= 0 ||
+      s.indexOf("spot_uv") >= 0 ||
+      s.indexOf("spot-uv") >= 0 ||
+      s.indexOf("spotuv") >= 0 ||
+      /(^|[_\-\s])uv([_\-\s]|$)/.test(s) ||
+      s.indexOf("varnish") >= 0 ||
+      s.indexOf("gloss") >= 0 ||
+      s.indexOf("matte") >= 0 ||
+      s.indexOf("lamination") >= 0
+    )
+      return "uv";
+
     return "print";
   }
   function pushItem(manifest, layerPath, it) {
@@ -234,13 +234,24 @@
   }
 
   // Build side buckets from items
-  var buckets = {
-    front: { print: [], foil: [], uv: [], emboss: [], deboss: [], die: [] },
-    back: { print: [], foil: [], uv: [], emboss: [], deboss: [], die: [] },
-  };
+  var buckets = { front: {}, back: {} };
+
+  function ensureCardBucket(side, idx) {
+    if (!buckets[side][idx]) {
+      buckets[side][idx] = {
+        print: [],
+        foil: [],
+        uv: [],
+        emboss: [],
+        deboss: [],
+        die: [],
+      };
+    }
+    return buckets[side][idx];
+  }
+
   var abRect =
     doc.artboards[doc.artboards.getActiveArtboardIndex()].artboardRect; // [L,T,R,B] in pt
-  var abCenterX = (abRect[0] + abRect[2]) / 2;
 
   function decideSide(rec) {
     var top = toLowerStr((rec.layerPath && rec.layerPath[0]) || "");
@@ -257,23 +268,29 @@
   // place recs into buckets
   for (var i = 0; i < manifest.items.length; i++) {
     var rec = manifest.items[i];
-    var fin = rec.finish || "print";
     var side = decideSide(rec);
-    if (!buckets[side])
-      buckets[side] = {
-        print: [],
-        foil: [],
-        uv: [],
-        emboss: [],
-        deboss: [],
-        die: [],
-      };
-    if (fin === "foil") buckets[side].foil.push(rec);
-    else if (fin === "uv") buckets[side].uv.push(rec);
-    else if (fin === "emboss") buckets[side].emboss.push(rec);
-    else if (fin === "deboss") buckets[side].deboss.push(rec);
-    else if (fin === "die") buckets[side].die.push(rec);
-    else buckets[side].print.push(rec);
+    if (!buckets[side]) buckets[side] = {};
+
+    var top = (rec.layerPath && rec.layerPath[0]) || "";
+    var idx = cardIndexFromTopName(top);
+
+    // finish type is decided from TOP layer name
+    var fin = rec.finish || "print";
+
+    // but still keep die explicitly.
+    if (!rec.visible) {
+      // keep for crop if it’s a likely geometry carrier
+      if (!(fin === "die" || fin === "print" || fin === "uv" || fin === "foil"))
+        continue;
+    }
+
+    var card = ensureCardBucket(side, idx);
+    if (fin === "foil") card.foil.push(rec);
+    else if (fin === "uv") card.uv.push(rec);
+    else if (fin === "emboss") card.emboss.push(rec);
+    else if (fin === "deboss") card.deboss.push(rec);
+    else if (fin === "die") card.die.push(rec);
+    else card.print.push(rec);
   }
 
   function unionBoundsPt(list) {
@@ -296,31 +313,29 @@
     return [L, T, R, B];
   }
 
-  function pickCrop(sideBucket) {
-    // Prefer print; else union of foil/uv/emboss/deboss; else die; else null
-    var b = unionBoundsPt(sideBucket.print);
+  function pickCrop(sideCardBucket) {
+    // Prefer die → then print → then union of effects
+    var b = unionBoundsPt(sideCardBucket.die);
+    if (!b) b = unionBoundsPt(sideCardBucket.print);
     if (!b)
       b = unionBoundsPt(
         [].concat(
-          sideBucket.foil,
-          sideBucket.uv,
-          sideBucket.emboss,
-          sideBucket.deboss
+          sideCardBucket.foil,
+          sideCardBucket.uv,
+          sideCardBucket.emboss,
+          sideCardBucket.deboss
         )
       );
-    if (!b) b = unionBoundsPt(sideBucket.die);
-    return b; // [L,T,R,B] in pt or null
+    return b;
   }
 
   // ---------- export area ----------
-  var outFile    = new File(outPath);
+  var outFile = new File(outPath);
   var baseFolder = outFile.parent;
-  var jobDir     = new Folder(baseFolder.fsName + "/assets/" + jobId);
+  var assetsDir = new Folder(baseFolder.fsName + "/assets");
+  if (!assetsDir.exists) assetsDir.create();
+  var jobDir = new Folder(assetsDir.fsName + "/" + jobId);
   if (!jobDir.exists) jobDir.create();
-
-function relPath(name) { return "assets/" + jobId + "/" + name; }
-function absPath(name) { return jobDir.fsName + "/" + name; }
-
 
   function relPath(name) {
     return "assets/" + jobId + "/" + name;
@@ -354,24 +369,6 @@ function absPath(name) { return jobDir.fsName + "/" + name; }
     opt.coordinatePrecision = 2;
     opt.embedRasterImages = true;
     docToExport.exportFile(f, ExportType.SVG, opt);
-  }
-
-  // Hide all layers except those whose top name contains tokens
-  function keepOnly(docX, side, tokensArray) {
-    var i;
-    for (i = 0; i < docX.layers.length; i++) {
-      var L = docX.layers[i];
-      var top = toLowerStr(L.name);
-      var matchSide = top.indexOf(side) >= 0; // 'front' or 'back'
-      var matchToken = false;
-      for (var t = 0; t < tokensArray.length; t++) {
-        if (top.indexOf(tokensArray[t]) >= 0) {
-          matchToken = true;
-          break;
-        }
-      }
-      L.visible = matchSide && matchToken;
-    }
   }
 
   function addArtboard(docX, rectPt) {
@@ -453,232 +450,276 @@ function absPath(name) { return jobDir.fsName + "/" + name; }
     }
   }
 
-  // build side package exporter
-  function exportSide(sideName, sideBucket) {
-    var crop = pickCrop(sideBucket);
-    if (!crop) return null; // nothing to export on this side
+  // true if any TOP layer name contains any token (optionally also contains 'sideName')
+  function topHasTokens(sideName, tokensArray) {
+    for (var i = 0; i < doc.layers.length; i++) {
+      var top = (doc.layers[i].name || "").toLowerCase();
+      var matchSide = sideName === "" ? true : top.indexOf(sideName) >= 0;
+      if (!matchSide) continue;
+      for (var t = 0; t < tokensArray.length; t++) {
+        var tk = String(tokensArray[t] || "").toLowerCase();
+        if (tk && top.indexOf(tk) >= 0) return true;
+      }
+    }
+    return false;
+  }
+
+  // Show ONLY this card's non-effect top layers (exclude foil/uv/emboss/deboss/die)
+  function withCardNonEffects(pref, fn) {
+    var exclude = [
+      "_foil",
+      "_spot_uv",
+      "_spot-uv",
+      "_uv",
+      "_emboss",
+      "_deboss",
+      "_laser_cut",
+      "_laser-cut",
+      "_die",
+      "_die_cut",
+      "_die-cut",
+      "_diecut",
+      "_cutline",
+      "_cut_line"
+    ];
+    var changed = [];
+    try {
+      for (var i = 0; i < doc.layers.length; i++) {
+        var L = doc.layers[i];
+        if (!L) continue;
+        var nm = (L.name || "").toLowerCase();
+        var isCard = nm.indexOf(pref) >= 0;
+        var isExcluded = false;
+        for (var e = 0; e < exclude.length; e++) {
+          if (nm.indexOf(pref + exclude[e]) >= 0) {
+            isExcluded = true;
+            break;
+          }
+        }
+        var vis0 = !!L.visible,
+          lock0 = !!L.locked;
+        changed.push({ L: L, vis0: vis0, lock0: lock0 });
+        try {
+          if (lock0) L.locked = false;
+        } catch (_) {}
+        try {
+          L.visible = isCard && !isExcluded;
+        } catch (_) {}
+      }
+      if (typeof fn === "function") fn();
+    } finally {
+      for (var j = 0; j < changed.length; j++) {
+        var c = changed[j];
+        try {
+          c.L.visible = c.vis0;
+        } catch (_) {}
+        try {
+          c.L.locked = c.lock0;
+        } catch (_) {}
+      }
+    }
+  }
+
+  // ---------- per-card exporter (replaces exportSide) ----------
+  function exportCard(sideName, idx, cardBucket) {
+    var crop = pickCrop(cardBucket);
+    if (!crop) return null;
+
     var leftPt = crop[0],
       topPt = crop[1],
       rightPt = crop[2],
       bottomPt = crop[3];
-
     var widthPt = rightPt - leftPt,
       heightPt = topPt - bottomPt;
+
     var dpi = 600;
-    var scalePercent = (dpi / 72.0) * 100.0; // upscale on export
-    var rel = {}; // relative asset paths written to manifest
+    var scalePercent = (dpi / 72.0) * 100.0;
 
-    // ---- Albedo (always export if crop exists) ----
-    // Show ONLY side layers that are NOT effects, regardless of buckets.
-    // Save/restore both visibility and locked state to avoid cross-bleed.
-    (function () {
-      var changed = []; // [{layer, vis, lock}]
-      try {
-        for (var i = 0; i < doc.layers.length; i++) {
-          var layer = doc.layers[i];
-          if (!layer) continue;
-          var nm = (layer.name || "").toLowerCase();
-          var matchSide = nm.indexOf(sideName) >= 0;
-          var isEffect =
-            nm.indexOf("foil") >= 0 ||
-            nm.indexOf("uv") >= 0 ||
-            nm.indexOf("emboss") >= 0 ||
-            nm.indexOf("deboss") >= 0 ||
-            nm.indexOf("die") >= 0;
+    var rel = {};
+    var pref = cardPrefix(sideName, Number(idx)); // e.g. "front_layer_0"
 
-          var prevVis = false,
-            prevLock = false;
-          try {
-            prevVis = !!layer.visible;
-          } catch (_e1) {}
-          try {
-            prevLock = !!layer.locked;
-          } catch (_e2) {}
+    // ---- Albedo (print) ----
+    var printTokens = [
+      pref + "_print",
+      pref + "_front_print",
+      pref + "_back_print",
+    ];
 
-          changed.push({ layer: layer, vis: prevVis, lock: prevLock });
-
-          try {
-            if (prevLock) layer.locked = false;
-          } catch (_e3) {}
-          try {
-            layer.visible = matchSide && !isEffect;
-          } catch (_e4) {}
-        }
-
+    if (topHasTokens("", printTokens)) {
+      // named print layer(s) exist → export them
+      withLayers("", printTokens, function () {
         addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-        pngExport(
-          doc,
-          absPath(sideName + "_albedo.png"),
-          scalePercent,
-          true,
-          true
-        );
-        rel.albedo = relPath(sideName + "_albedo.png");
-      } finally {
-        for (var j = 0; j < changed.length; j++) {
-          var ch = changed[j];
-          try {
-            ch.layer.visible = ch.vis;
-          } catch (_r1) {}
-          try {
-            ch.layer.locked = ch.lock;
-          } catch (_r2) {}
-        }
-      }
-    })();
-
-    // ---- Foil mask ----
-    if (sideBucket.foil.length > 0) {
-      withLayers(sideName, ["foil"], function () {
+        pngExport(doc, absPath(pref + "_albedo.png"), scalePercent, true, true);
+        rel.albedo = relPath(pref + "_albedo.png");
+      });
+    } else {
+      // fallback: export all non-effect layers for this card prefix
+      withCardNonEffects(pref, function () {
         addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-        // Export with transparency; viewer uses alpha as mask.
-        pngExport(
-          doc,
-          absPath(sideName + "_foil.png"),
-          scalePercent,
-          true,
-          true
-        );
-        rel.foil = relPath(sideName + "_foil.png");
+        pngExport(doc, absPath(pref + "_albedo.png"), scalePercent, true, true);
+        rel.albedo = relPath(pref + "_albedo.png");
       });
     }
 
-    // ---- Spot UV mask ----
-    if (sideBucket.uv.length > 0) {
+    // ---- Foil ----
+    if (cardBucket.foil.length > 0) {
+      withLayers("", [pref + "_foil"], function () {
+        addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+        pngExport(doc, absPath(pref + "_foil.png"), scalePercent, true, true);
+        rel.foil = relPath(pref + "_foil.png");
+      });
+    }
+
+    // ---- Spot UV ----
+    if (cardBucket.uv.length > 0) {
       withLayers(
-        sideName,
-        ["uv", "spot_uv", "spot-uv", "spotuv", "spot"],
+        "",
+        [pref + "_spot_uv", pref + "_spot-uv", pref + "_uv"],
         function () {
           addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-          pngExport(
-            doc,
-            absPath(sideName + "_uv.png"),
-            scalePercent,
-            true,
-            true
-          );
-          rel.uv = relPath(sideName + "_uv.png");
+          pngExport(doc, absPath(pref + "_uv.png"), scalePercent, true, true);
+          rel.uv = relPath(pref + "_uv.png");
         }
       );
     }
 
-    // ---- Emboss/Deboss height mask (monochrome) ----
-    if (sideBucket.emboss.length > 0 || sideBucket.deboss.length > 0) {
-      withLayers(sideName, ["emboss", "deboss"], function () {
+    // ---- Emboss/Deboss ----
+    if (cardBucket.emboss.length > 0 || cardBucket.deboss.length > 0) {
+      withLayers("", [pref + "_emboss", pref + "_deboss"], function () {
         addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-        pngExport(
-          doc,
-          absPath(sideName + "_emboss.png"),
-          scalePercent,
-          true,
-          true
-        );
-        rel.emboss = relPath(sideName + "_emboss.png");
+        pngExport(doc, absPath(pref + "_emboss.png"), scalePercent, true, true);
+        rel.emboss = relPath(pref + "_emboss.png");
       });
     }
 
-    // ---- Die-cut SVG (across sides, export once later) ----
+    // ---- Die-cut (svg + mask png) ----
+    if (cardBucket.die.length > 0) {
+      withLayers(
+        "",
+        [
+          pref + "_laser_cut",
+          pref + "_laser-cut",
+          pref + "_die",
+          pref + "_die_cut",
+          pref + "_die-cut",
+          pref + "_diecut",
+          pref + "_cutline",
+          pref + "_cut_line",
+        ],
+        function () {
+          addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+          svgExport(doc, absPath(pref + "_diecut.svg"));
+          pngExport(
+            doc,
+            absPath(pref + "_diecut_mask.png"),
+            scalePercent,
+            true,
+            true
+          );
+          rel.die_svg = relPath(pref + "_diecut.svg");
+          rel.die_png = relPath(pref + "_diecut_mask.png");
+        }
+      );
+    }
 
-    // geometry meta
     var size_mm = { w: pt2mm(widthPt), h: pt2mm(heightPt) };
-    var origin_mm = { x: pt2mm(leftPt), y: pt2mm(-topPt) }; // artboard origin within document (for reference)
+    var origin_mm = { x: pt2mm(leftPt), y: pt2mm(-topPt) };
     var px = {
       w: Math.round(widthPt * (dpi / 72.0)),
       h: Math.round(heightPt * (dpi / 72.0)),
     };
 
     return {
+      index: Number(idx),
       maps: rel,
       geometry: { size_mm: size_mm, origin_mm: origin_mm, px: px, dpi: dpi },
     };
   }
 
-  var frontPkg = exportSide("front", buckets.front);
-  var backPkg = exportSide("back", buckets.back);
-
-  if (frontPkg) {
-    manifest.maps.front = frontPkg.maps;
-    manifest.geometry.front = frontPkg.geometry;
-  }
-  if (backPkg) {
-    manifest.maps.back = backPkg.maps;
-    manifest.geometry.back = backPkg.geometry;
-  }
-
-  // ---- Die cut (single export if any side has die) ----
-  if (
-    (buckets.front.die && buckets.front.die.length) ||
-    (buckets.back.die && buckets.back.die.length)
-  ) {
-    // crop region: prefer union of both crops if both exist, else whichever exists
-    var cropForDie = null;
-    if (frontPkg && backPkg) {
-      var wpt = Math.max(
-        mm2pt(frontPkg.geometry.size_mm.w),
-        mm2pt(backPkg.geometry.size_mm.w)
-      );
-      var hpt = Math.max(
-        mm2pt(frontPkg.geometry.size_mm.h),
-        mm2pt(backPkg.geometry.size_mm.h)
-      );
-      var Ld = mm2pt(frontPkg.geometry.origin_mm.x),
-        Td = -mm2pt(frontPkg.geometry.origin_mm.y);
-      cropForDie = [Ld, Td, Ld + wpt, Td - hpt];
-    } else if (frontPkg) {
-      var Lf = mm2pt(frontPkg.geometry.origin_mm.x),
-        Tf = -mm2pt(frontPkg.geometry.origin_mm.y);
-      cropForDie = [
-        Lf,
-        Tf,
-        Lf + mm2pt(frontPkg.geometry.size_mm.w),
-        Tf - mm2pt(frontPkg.geometry.size_mm.h),
-      ];
-    } else if (backPkg) {
-      var Lb = mm2pt(backPkg.geometry.origin_mm.x),
-        Tb = -mm2pt(backPkg.geometry.origin_mm.y);
-      cropForDie = [
-        Lb,
-        Tb,
-        Lb + mm2pt(backPkg.geometry.size_mm.w),
-        Tb - mm2pt(backPkg.geometry.size_mm.h),
-      ];
+  function exportCards(sideName, sideBucketByIdx) {
+    var out = [];
+    for (var k in sideBucketByIdx) {
+      if (!sideBucketByIdx.hasOwnProperty(k)) continue;
+      var pkg = exportCard(sideName, k, sideBucketByIdx[k]);
+      if (pkg) out.push(pkg);
     }
-
-    // Show ANY top layer that contains a die token (ignore side)
-    withLayers("", ["die", "die_cut", "die-cut", "diecut"], function () {
-      if (cropForDie) addArtboard(doc, cropForDie);
-      // ✅ write into the per-job dir and record the per-job relative path
-      svgExport(doc, absPath("diecut.svg"));
-      pngExport(doc, absPath("diecut_mask.png"), (600 / 72) * 100, true, true);
-
+    out.sort(function (a, b) {
+      return a.index - b.index;
     });
+    return out;
+  }
 
-    manifest.geometry.diecut_svg = relPath("diecut.svg");
-    manifest.geometry.diecut_png = relPath("diecut_mask.png");
+  // run per side
+  var frontCards = exportCards("front", buckets.front);
+  var backCards = exportCards("back", buckets.back);
+
+  if (frontCards.length) {
+    manifest.maps.front = frontCards[0].maps;
+    manifest.geometry.front = frontCards[0].geometry;
+  }
+  if (backCards.length) {
+    manifest.maps.back = backCards[0].maps;
+    manifest.geometry.back = backCards[0].geometry;
   }
 
   // ---------- write manifest ----------
+  manifest.maps.front_cards = [];
+  manifest.geometry.front_cards = [];
+  for (var iF = 0; iF < frontCards.length; iF++) {
+    manifest.maps.front_cards.push({
+      index: frontCards[iF].index,
+      maps: frontCards[iF].maps,
+    });
+    manifest.geometry.front_cards.push({
+      index: frontCards[iF].index,
+      meta: frontCards[iF].geometry,
+    });
+  }
+  manifest.maps.back_cards = [];
+  manifest.geometry.back_cards = [];
+  for (var iB = 0; iB < backCards.length; iB++) {
+    manifest.maps.back_cards.push({
+      index: backCards[iB].index,
+      maps: backCards[iB].maps,
+    });
+    manifest.geometry.back_cards.push({
+      index: backCards[iB].index,
+      meta: backCards[iB].geometry,
+    });
+  }
+
+  // Back-compat: if only one card on a side, also publish legacy fields
+  if (frontCards.length) {
+    manifest.maps.front = frontCards[0].maps;
+    manifest.geometry.front = frontCards[0].geometry;
+  }
+  if (backCards.length) {
+    manifest.maps.back = backCards[0].maps;
+    manifest.geometry.back = backCards[0].geometry;
+  }
+
+  // Diagnostics (summed over cards)
+  function summarize(sideBuckets) {
+    var sum = { print: 0, foil: 0, uv: 0, emboss: 0, deboss: 0, die: 0 };
+    for (var k in sideBuckets)
+      if (sideBuckets.hasOwnProperty(k)) {
+        var b = sideBuckets[k];
+        sum.print += b.print.length;
+        sum.foil += b.foil.length;
+        sum.uv += b.uv.length;
+        sum.emboss += b.emboss.length;
+        sum.deboss += b.deboss.length;
+        sum.die += b.die.length;
+      }
+    return sum;
+  }
   manifest.diagnostics = {
-    front: {
-      print: buckets.front.print.length,
-      foil: buckets.front.foil.length,
-      uv: buckets.front.uv.length,
-      emboss: buckets.front.emboss.length,
-      deboss: buckets.front.deboss.length,
-      die: buckets.front.die.length,
-    },
-    back: {
-      print: buckets.back.print.length,
-      foil: buckets.back.foil.length,
-      uv: buckets.back.uv.length,
-      emboss: buckets.back.emboss.length,
-      deboss: buckets.back.deboss.length,
-      die: buckets.back.die.length,
-    },
+    front: summarize(buckets.front),
+    back: summarize(buckets.back),
   };
 
   manifest.assets_rel_base = "assets/" + jobId + "/";
-  manifest.v = 2;
+  manifest.v = 3;
 
   writeJSONFile(outPath, manifest);
 

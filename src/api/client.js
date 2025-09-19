@@ -21,12 +21,15 @@ const getApiUrl = () => {
 };
 
 const API_BASE_URL = getApiUrl();
+const ASSET_BASE_URL =
+  import.meta.env.VITE_ASSETS_BASE_URL || // e.g. http://<parser-host>:5001/assets
+  `${API_BASE_URL}/proofs`;
 
 console.log("🔗 API Base URL:", API_BASE_URL);
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 180000, // 3 minutes timeout for job operations
+  timeout: 500000, // 3 minutes timeout for job operations
   headers: {
     "Content-Type": "application/json",
   },
@@ -103,7 +106,7 @@ export const uploadFile = async (file) => {
         );
         console.log(`📤 Upload progress: ${percentCompleted}%`);
       },
-      timeout: 120000, // 2 minutes for upload
+      timeout: 500000, // 3 minutes for upload
     });
 
     console.log("✅ Upload successful:", response.data);
@@ -178,15 +181,13 @@ export const getParseResult = async (jobId) => {
 // Get asset URL for textures
 export const getAssetUrl = (jobId, relOrName) => {
   const s = String(relOrName || "");
-  // If backend already gave an absolute URL, use it as-is
-  if (/^https?:\/\//i.test(s)) return s;
-  // If it's a rel like "assets/<jobId>/<file>", strip the prefix
-  const marker = `/assets/${jobId}/`;
-  const name = s.includes(marker)
-    ? s.slice(s.indexOf(marker) + marker.length)
+  if (/^https?:\/\//i.test(s)) return s; // already absolute
+  // strip leading "assets/<jobId>/" if present
+  const marker = `assets/${jobId}/`;
+  const name = s.startsWith(marker)
+    ? s.slice(marker.length)
     : s.split("/").pop();
-  // Option B relay path
-  return `${API_BASE_URL}/proofs/${jobId}/${name}`;
+  return `${ASSET_BASE_URL}/${jobId}/${encodeURIComponent(name)}`;
 };
 
 // Health check for testing connection

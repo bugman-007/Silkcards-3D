@@ -31,6 +31,16 @@ async def proofs(job_id: str, path: str, request: Request):
 
     resp = Response(content=r.content, status_code=r.status_code)
     # Pass-through important headers
+    origin = request.headers.get("origin", "")
+    if FRONTEND_ORIGIN:
+        resp.headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN
+    else:
+        # permissive fallback for images in dev
+        resp.headers["Access-Control-Allow-Origin"] = origin or "*"
+
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*,x-requested-with,range"
+    resp.headers["Vary"] = "Origin"
     for h in (
         "content-type",
         "cache-control",

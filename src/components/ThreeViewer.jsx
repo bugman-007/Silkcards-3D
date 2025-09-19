@@ -1,5 +1,5 @@
 // src/components/ThreeViewer.jsx - UPDATED WITH CARD SELECTOR
-import { Suspense, useState, useMemo } from "react";
+import { Suspense, useState, useMemo, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import {
   OrbitControls,
@@ -52,18 +52,28 @@ export default function ThreeViewer({ cardData }) {
     });
 
     // Extract file information
-    const originalFile = metadata.originalFile || "Business Card";
     const g = parseResult.geometry || {};
-    const geomFront = g.front?.size_mm;
-    const geomBack = g.back?.size_mm;
-    const primary = geomFront || geomBack;
+    // v3 first-card geometry if available
+    const gf0 = Array.isArray(g.front_cards) && g.front_cards[0]?.meta?.size_mm;
+    const gb0 = Array.isArray(g.back_cards) && g.back_cards[0]?.meta?.size_mm;
+    // v2 fallback
+    const v2f = g.front?.size_mm;
+    const v2b = g.back?.size_mm;
 
+    const primary = gf0 || gb0 || v2f || v2b;
     const dimensions = primary
       ? { width: primary.w, height: primary.h, thickness: 0.35 }
       : parseResult.dimensions || { width: 89, height: 51, thickness: 0.35 };
+
     const processingTime = metadata.processingTime
       ? `${(metadata.processingTime / 1000).toFixed(1)}s`
       : "N/A";
+
+    const originalFile =
+      parseResult?.metadata?.originalFile ||
+      cardData?.file?.name ||
+      parseResult?.doc?.name ||
+      "Untitled.ai";
 
     return {
       originalFile,
@@ -80,9 +90,18 @@ export default function ThreeViewer({ cardData }) {
         ...cardData,
         layers: activeCardData,
         activeCard: activeCardKey,
-        dimensions, // <— force selected size into CardModel
+        dimensions,
+        jobId: parseResult.jobId || parseResult.job_id || cardData?.jobId, // <<< pass through for texture URLs
       },
     };
+  }, [cardData, selectedCard]);
+
+  useEffect(() => {
+    const cards = cardData?.cards || {};
+    const keys = Object.keys(cards);
+    if (keys.length > 0 && !cards[selectedCard]) {
+      setSelectedCard(keys.includes("front") ? "front" : keys[0]);
+    }
   }, [cardData, selectedCard]);
 
   const handleCardChange = (cardKey) => {
@@ -177,13 +196,13 @@ export default function ThreeViewer({ cardData }) {
 
           {/* Camera Controls */}
           <OrbitControls
-            enablePan={false}
+            enablePan={true}
             enableZoom={true}
             enableRotate={true}
             minDistance={0.05}
             maxDistance={0.5}
             maxPolarAngle={Math.PI / 2}
-            autoRotate={false}
+            autoRotate={autoRotate}
           />
         </Suspense>
       </Canvas>

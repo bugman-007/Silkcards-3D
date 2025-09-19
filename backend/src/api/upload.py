@@ -15,22 +15,31 @@ def absolutize_manifest(m: dict) -> dict:
 
     base = f"{PUBLIC_BACKEND_ORIGIN}/proofs/{job_id}/"
 
-    # maps.front/back: convert assets/<jobId>/<name> -> <PUBLIC>/proofs/<jobId>/<name>
+    # v3: per-card maps
+    for side in ("front_cards", "back_cards"):
+        arr = m.get("maps", {}).get(side, [])
+        for card in arr or []:
+            maps = (card or {}).get("maps", {}) or {}
+            for key, rel in list(maps.items()):
+                if not rel: continue
+                name = str(rel).split(f"assets/{job_id}/")[-1]
+                maps[key] = base + name
+
+    # v2: legacy single-side maps (your current code)
     maps = m.get("maps", {})
     for side in ("front", "back"):
         side_maps = maps.get(side)
         if not side_maps: continue
         for k, rel in list(side_maps.items()):
-            # Expect rel like "assets/<jobId>/<filename>"
-            name = rel.split(f"assets/{job_id}/")[-1]
+            name = str(rel).split(f"assets/{job_id}/")[-1]
             side_maps[k] = base + name
 
-    # diecut svg (and optional png)
+    # diecut on geometry if present
     geom = m.get("geometry", {})
     for die_key in ("diecut_svg", "diecut_png"):
         rel = geom.get(die_key)
         if rel:
-            name = rel.split(f"assets/{job_id}/")[-1]
+            name = str(rel).split(f"assets/{job_id}/")[-1]
             geom[die_key] = base + name
 
     m["assets_base_url"] = base
