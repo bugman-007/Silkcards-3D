@@ -1,5 +1,5 @@
 // C:\parser_service\scripts\export.jsx
-#target illustrator
+// #target illustrator
 (function () {
   // ---------- tiny utils ----------
   function _isArray(a) {
@@ -10,7 +10,7 @@
       .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"')
       .replace(/\r/g, "\\r")
-      .replace(/\n/g, "\\n"); 
+      .replace(/\n/g, "\\n");
   }
   function stringify(v) {
     if (v === null || v === undefined) return "null";
@@ -56,6 +56,13 @@
   function mm2pt(mm) {
     return (mm * 72.0) / 25.4;
   }
+  function white() {
+    var c = new RGBColor();
+    c.red = 255;
+    c.green = 255;
+    c.blue = 255;
+    return c;
+  }
 
   // ---------- job IO ----------
   var inPath = "",
@@ -88,6 +95,29 @@
 
   function toLowerStr(obj) {
     return (obj == null ? "" : String(obj)).toLowerCase();
+  }
+  // Recursively set visibility for a layer and its descendants (sublayers & groups)
+  function setVisibleDeep(container, v) {
+    try {
+      container.visible = v;
+    } catch (e) {}
+    // sublayers
+    if (container.layers) {
+      for (var i = 0; i < container.layers.length; i++) {
+        try {
+          setVisibleDeep(container.layers[i], v);
+        } catch (_e1) {}
+      }
+    }
+    // pageItems under this container (groups, etc.) – clear 'hidden' where available
+    if (container.pageItems) {
+      for (var j = 0; j < container.pageItems.length; j++) {
+        var it = container.pageItems[j];
+        try {
+          if (typeof it.hidden !== "undefined") it.hidden = !v ? true : false;
+        } catch (_e2) {}
+      }
+    }
   }
   function classifySideFromName(name) {
     var s = toLowerStr(name);
@@ -429,7 +459,13 @@
 
         // Apply target visibility
         try {
-          L.visible = shouldBe;
+          if (shouldBe) {
+            setVisibleDeep(L, true);
+          } else {
+            try {
+              L.visible = false;
+            } catch (_e4) {}
+          }
         } catch (_e4) {}
       }
 
@@ -503,7 +539,13 @@
           if (lock0) L.locked = false;
         } catch (_) {}
         try {
-          L.visible = isCard && !isExcluded;
+          if (isCard && !isExcluded) {
+            setVisibleDeep(L, true);
+          } else {
+            try {
+              L.visible = false;
+            } catch (_e) {}
+          }
         } catch (_) {}
       }
       if (typeof fn === "function") fn();
@@ -545,21 +587,12 @@
       pref + "_back_print",
     ];
 
-    if (topHasTokens("", printTokens)) {
-      // named print layer(s) exist → export them
-      withLayers("", printTokens, function () {
-        addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-        pngExport(doc, absPath(pref + "_albedo.png"), scalePercent, true, true);
-        rel.albedo = relPath(pref + "_albedo.png");
-      });
-    } else {
-      // fallback: export all non-effect layers for this card prefix
-      withCardNonEffects(pref, function () {
-        addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-        pngExport(doc, absPath(pref + "_albedo.png"), scalePercent, true, true);
-        rel.albedo = relPath(pref + "_albedo.png");
-      });
-    }
+    // Export all non-effect layers for this card prefix (robust to naming)
+    withCardNonEffects(pref, function () {
+      addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+      pngExport(doc, absPath(pref + "_albedo.png"), scalePercent, true, true);
+      rel.albedo = relPath(pref + "_albedo.png");
+    });
 
     // ---- Foil ----
     if (cardBucket.foil.length > 0) {
@@ -609,6 +642,35 @@
         function () {
           addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
           svgExport(doc, absPath(pref + "_diecut.svg"));
+          app.executeMenuCommand("selectall"); // select visible die art
+          try {
+            app.executeMenuCommand("expandStyle");
+          } catch (e) {} // outline strokes to shapes if needed
+
+          // fill white, no strokes
+          var sel = app.selection;
+          if (sel && sel.length) {
+            for (var i = 0; i < sel.length; i++) {
+              var it = sel[i];
+              try {
+                it.stroked = false;
+              } catch (_) {}
+              try {
+                it.filled = true;
+                it.fillColor = white();
+              } catch (_) {}
+              if (it.typename === "CompoundPathItem") {
+                for (var p = 0; p < it.pathItems.length; p++) {
+                  try {
+                    it.pathItems[p].stroked = false;
+                    it.pathItems[p].filled = true;
+                    it.pathItems[p].fillColor = white();
+                  } catch (_) {}
+                }
+              }
+            }
+            // now export the mask; white (1.0) will keep, black (0) will cut
+          }
           pngExport(
             doc,
             absPath(pref + "_diecut_mask.png"),

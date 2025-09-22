@@ -7,6 +7,35 @@ import { getAssetUrl } from "../api/client";
 import EffectOverlay from "./EffectOverlay";
 import BaseCard from "./BaseCard";
 
+function maskLooksFilled(tex) {
+  try {
+    const img = tex && tex.image;
+    if (!img || !img.width || !img.height) return false;
+    const w = img.width, h = img.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, w, h).data;
+
+    let bright = 0, total = 0;
+    const stepX = Math.max(1, Math.floor(w / 64));
+    const stepY = Math.max(1, Math.floor(h / 64));
+    for (let y = 0; y < h; y += stepY) {
+      for (let x = 0; x < w; x += stepX) {
+        const i = (y * w + x) * 4;
+        const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+        const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+        if (a > 10 && lum > 0.6) bright++;
+        total++;
+      }
+    }
+    return (bright / Math.max(1, total)) > 0.05; // >5% white-ish pixels = usable
+  } catch {
+    return false;
+  }
+}
+
 function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   const cardRef = useRef();
 
@@ -147,6 +176,17 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       cancelled = true;
     };
   }, [jobId, maps]);
+  
+  const alphaFront = useMemo(() => {
+    const t = textures.die_front;
+    return t && maskLooksFilled(t) ? t : null;
+  }, [textures.die_front]);
+
+  const alphaBack = useMemo(() => {
+    const t = textures.die_back;
+    return t && maskLooksFilled(t) ? t : null;
+  }, [textures.die_back]);
+
 
   // Extract layer data - handle multiple cards
   const { layers, cardsDetected, activeCard } = useMemo(() => {

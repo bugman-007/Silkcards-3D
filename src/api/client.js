@@ -13,11 +13,11 @@ const getApiUrl = () => {
     const hostname = window.location.hostname;
 
     if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return "http://44.203.155.170:8000";
+      return "http://54.234.136.10:8000";
     }
   }
 
-  return "http://44.203.155.170:8000";
+  return "http://54.234.136.10:8000";
 };
 
 const API_BASE_URL = getApiUrl();
