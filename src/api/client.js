@@ -13,11 +13,11 @@ const getApiUrl = () => {
     const hostname = window.location.hostname;
 
     if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return "http://54.234.136.10:8000";
+      return "https://54-234-136-10.nip.io";
     }
   }
 
-  return "http://54.234.136.10:8000";
+  return "https://54-234-136-10.nip.io";
 };
 
 const API_BASE_URL = getApiUrl();
@@ -96,7 +96,7 @@ export const uploadFile = async (file) => {
       `(${(file.size / (1024 * 1024)).toFixed(2)} MB)`
     );
 
-    const response = await apiClient.post("/upload", formData, {
+    const response = await apiClient.post("/upload/", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
       },
@@ -179,15 +179,33 @@ export const getParseResult = async (jobId) => {
 };
 
 // Get asset URL for textures
+// src/api/client.js -- replace the whole function
 export const getAssetUrl = (jobId, relOrName) => {
-  const s = String(relOrName || "");
-  if (/^https?:\/\//i.test(s)) return s; // already absolute
-  // strip leading "assets/<jobId>/" if present
-  const marker = `assets/${jobId}/`;
-  const name = s.startsWith(marker)
-    ? s.slice(marker.length)
-    : s.split("/").pop();
-  return `${ASSET_BASE_URL}/${jobId}/${encodeURIComponent(name)}`;
+  const s = String(relOrName || "").trim();
+
+  // 1) Already absolute? (http/https)
+  if (/^https?:\/\//i.test(s)) return s;
+
+  // 2) Already looks like /proofs/<id>/<name>
+  if (s.startsWith("/proofs/")) {
+    // ensure it’s absolute to our API base
+    return `${API_BASE_URL}${s}`;
+  }
+
+  // 3) assets/<id>/<path...>  →  /proofs/<id>/<path...>
+  const m = s.match(/^assets\/([^/]+)\/(.+)$/);
+  if (m) {
+    const id = m[1];
+    const rest = m[2];
+    return `${ASSET_BASE_URL}/${id}/${encodeURIComponent(rest)}`;
+  }
+
+  // 4) bare filename (no id in the string) → use the jobId we were given
+  if (!jobId) {
+    // last resort, don’t guess an ID—return as-is and let the caller 404 visibly
+    return s;
+  }
+  return `${ASSET_BASE_URL}/${jobId}/${encodeURIComponent(s)}`;
 };
 
 // Health check for testing connection

@@ -6,9 +6,11 @@ from app.api.upload import router as upload_router
 from app.api.assets import router as assets_router
 
 app = FastAPI()
+app.router.redirect_slashes = False
 
 origins = [
     "http://localhost:5173",  # Vite dev
+    "https://54-234-136-10.nip.io",
     "https://revolve360.vercel.app",  # Vercel (replace with your actual domain)
 ]
 

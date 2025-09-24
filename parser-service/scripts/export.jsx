@@ -1,5 +1,5 @@
 // C:\parser_service\scripts\export.jsx
-// #target illustrator
+#target illustrator
 (function () {
   // ---------- tiny utils ----------
   function _isArray(a) {
@@ -33,6 +33,33 @@
     }
     return "null";
   }
+  function normalizeSelectionToWhite() {
+    try {
+      app.executeMenuCommand("expandStyle");
+    } catch (e) {}
+    var sel = app.selection;
+    if (!sel || !sel.length) return;
+    for (var i = 0; i < sel.length; i++) {
+      var it = sel[i];
+      try {
+        it.stroked = false;
+      } catch (_) {}
+      try {
+        it.filled = true;
+        it.fillColor = white();
+      } catch (_) {}
+      if (it.typename === "CompoundPathItem") {
+        for (var p = 0; p < it.pathItems.length; p++) {
+          try {
+            it.pathItems[p].stroked = false;
+            it.pathItems[p].filled = true;
+            it.pathItems[p].fillColor = white();
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
   function writeJSONFile(absPath, obj) {
     var f = new File(absPath);
     try {
@@ -516,7 +543,7 @@
       "_die-cut",
       "_diecut",
       "_cutline",
-      "_cut_line"
+      "_cut_line",
     ];
     var changed = [];
     try {
@@ -598,11 +625,12 @@
     if (cardBucket.foil.length > 0) {
       withLayers("", [pref + "_foil"], function () {
         addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+        app.executeMenuCommand("selectall");
+        normalizeSelectionToWhite(); // <<< add this
         pngExport(doc, absPath(pref + "_foil.png"), scalePercent, true, true);
         rel.foil = relPath(pref + "_foil.png");
       });
     }
-
     // ---- Spot UV ----
     if (cardBucket.uv.length > 0) {
       withLayers(
@@ -610,6 +638,8 @@
         [pref + "_spot_uv", pref + "_spot-uv", pref + "_uv"],
         function () {
           addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+          app.executeMenuCommand("selectall");
+          normalizeSelectionToWhite(); // <<< add this
           pngExport(doc, absPath(pref + "_uv.png"), scalePercent, true, true);
           rel.uv = relPath(pref + "_uv.png");
         }
@@ -620,6 +650,8 @@
     if (cardBucket.emboss.length > 0 || cardBucket.deboss.length > 0) {
       withLayers("", [pref + "_emboss", pref + "_deboss"], function () {
         addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+        app.executeMenuCommand("selectall");
+        normalizeSelectionToWhite(); // <<< add this
         pngExport(doc, absPath(pref + "_emboss.png"), scalePercent, true, true);
         rel.emboss = relPath(pref + "_emboss.png");
       });

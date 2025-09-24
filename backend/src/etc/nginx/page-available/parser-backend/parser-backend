@@ -1,0 +1,70 @@
+# --- CORS allowlist (keep this in http{} scope, not inside server{}) ---
+map $http_origin $cors_allowed_origin {
+    default                                        "";
+    "~^http://localhost:5173$"                     $http_origin;
+    "~^http://127\.0\.0\.1:5173$"                  $http_origin;
+    "~^https://revolve360\.vercel\.app$"           $http_origin;
+    "~^https://54-234-136-10\.nip\.io$"            $http_origin;
+}
+map $cors_allowed_origin $cors_allow_credentials {
+    default  "false";
+    ""       "false";
+    ~.       "true";
+}
+
+# --- HTTP: redirect everything to HTTPS ---
+server {
+  listen 80;
+  server_name 54-234-136-10.nip.io;
+  return 301 https://$host$request_uri;
+}
+
+# --- HTTPS: proxy to FastAPI (uvicorn on 127.0.0.1:8000) ---
+server {
+  listen 443 ssl http2;
+  server_name 54-234-136-10.nip.io;
+
+  # TLS (Certbot-managed)
+  ssl_certificate     /etc/letsencrypt/live/54-234-136-10.nip.io/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/54-234-136-10.nip.io/privkey.pem;
+  include             /etc/letsencrypt/options-ssl-nginx.conf;
+  ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+  client_max_body_size 200m;
+
+  # 👇 One location to handle everything (including OPTIONS)
+  location / {
+    # --- Preflight (already working) ---
+    if ($request_method = OPTIONS) {
+        add_header Access-Control-Allow-Origin      $cors_allowed_origin always;
+        add_header Access-Control-Allow-Methods     "GET,POST,PUT,PATCH,DELETE,OPTIONS" always;
+        add_header Access-Control-Allow-Headers     $http_access_control_request_headers always;
+        add_header Access-Control-Allow-Credentials $cors_allow_credentials always;
+        add_header Access-Control-Max-Age           86400 always;
+        add_header Vary                             "Origin" always;
+        return 204;
+    }
+
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_http_version 1.1;
+    proxy_set_header   Host                $host;
+    proxy_set_header   X-Real-IP           $remote_addr;
+    proxy_set_header   X-Forwarded-For     $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto   $scheme;
+    proxy_set_header   X-Forwarded-Host    $host;
+    proxy_read_timeout 300;
+
+    # ⛔️ Strip upstream CORS so we don’t get duplicates
+    proxy_hide_header  Access-Control-Allow-Origin;
+    proxy_hide_header  Access-Control-Allow-Credentials;
+    proxy_hide_header  Access-Control-Expose-Headers;
+    proxy_hide_header  Access-Control-Allow-Methods;
+    proxy_hide_header  Access-Control-Allow-Headers;
+
+    # ✅ Add ONE set of CORS headers on *all* proxied responses
+    add_header Access-Control-Allow-Origin      $cors_allowed_origin always;
+    add_header Access-Control-Allow-Credentials $cors_allow_credentials always;
+    add_header Access-Control-Expose-Headers    "Content-Length,Content-Range,ETag" always;
+    add_header Vary                             "Origin" always;
+    }
+}

@@ -8,6 +8,7 @@ import {
 } from "@react-three/drei";
 import CardModel from "./CardModel";
 import CardSelector from "./CardSelector";
+import * as THREE from "three";
 import "./ThreeViewer.css";
 
 export default function ThreeViewer({ cardData }) {
@@ -163,42 +164,58 @@ export default function ThreeViewer({ cardData }) {
       )}
 
       {/* 3D Canvas */}
-      <Canvas className="three-canvas">
+      <Canvas
+        className="three-canvas"
+        gl={{ toneMapping: THREE.NoToneMapping }}
+        onCreated={({ gl }) => {
+          gl.outputColorSpace = THREE.SRGBColorSpace;
+        }}
+      >
+        <color attach="background" args={["#0f1220"]} />{" "}
+        {/* deep blue charcoal */}
         <Suspense fallback={<LoadingMesh />}>
-          {/* Camera */}
           <PerspectiveCamera
             makeDefault
-            position={[0, 0, 0.2]} // Closer for business card scale
+            position={[0, 0, 0.22]}
             fov={40}
             near={0.001}
             far={10}
           />
 
-          {/* Lighting Setup */}
-          <ambientLight intensity={0.4} />
+          {/* Lighting */}
+          <ambientLight intensity={0.5} />
           <directionalLight
-            position={[0.1, 0.1, 0.1]}
-            intensity={1}
+            position={[0.8, 1.2, 0.6]}
+            intensity={1.1}
             castShadow
             shadow-mapSize={[1024, 1024]}
           />
-          <directionalLight position={[-0.1, 0.1, 0.1]} intensity={0.5} />
+          <directionalLight position={[-0.6, 0.8, 0.4]} intensity={0.4} />
 
-          {/* Environment for reflections */}
-          <Environment preset="studio" />
+          {/* Softer reflections, nicer tint */}
+          <Environment preset="apartment" />
 
-          {/* Card Model - Pass the card data with selected card */}
+          {/* Soft ground contact */}
+          <mesh
+            position={[0, -0.05, 0]}
+            rotation={[-Math.PI / 2, 0, 0]}
+            receiveShadow
+          >
+            <planeGeometry args={[0.6, 0.6]} />
+            <meshStandardMaterial color="#0c0f1a" roughness={1} metalness={0} />
+          </mesh>
+          {/* If you use drei@latest: <ContactShadows opacity={0.3} scale={1} blur={2} far={0.3} /> */}
+
           <CardModel
             cardData={fullCardData}
             autoRotate={autoRotate}
-            showEffects={true}
+            showEffects
           />
 
-          {/* Camera Controls */}
           <OrbitControls
-            enablePan={true}
-            enableZoom={true}
-            enableRotate={true}
+            enablePan
+            enableZoom
+            enableRotate
             minDistance={0.05}
             maxDistance={0.5}
             maxPolarAngle={Math.PI / 2}
