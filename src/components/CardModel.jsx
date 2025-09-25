@@ -197,6 +197,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
 
   useEffect(() => {
     let cancelled = false;
+
     const loader = new THREE.TextureLoader();
     loader.setCrossOrigin("anonymous");
 
@@ -208,8 +209,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       return relPath;
     };
 
-    // --- Add this helper (CardModel.jsx, top-level inside the file) ---
-    // CardModel.jsx — convert any artwork PNG into a clean white-on-black mask
+    // turn any colored PNG into a hard white-on-black mask (keeps edges crisp)
     function toBinaryMaskCanvas(image) {
       const w = image.naturalWidth || image.width;
       const h = image.naturalHeight || image.height;
@@ -222,53 +222,41 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       const img = ctx.getImageData(0, 0, w, h);
       const d = img.data;
 
-      // Sample the 4 corners to get a background color/alpha
-      const at = (x, y) => {
+      // estimate background from 4 corners
+      const pick = (x, y) => {
         const i = (y * w + x) * 4;
         return { r: d[i], g: d[i + 1], b: d[i + 2], a: d[i + 3] };
       };
-      const c1 = at(0, 0),
-        c2 = at(w - 1, 0),
-        c3 = at(0, h - 1),
-        c4 = at(w - 1, h - 1);
+      const c1 = pick(0, 0),
+        c2 = pick(w - 1, 0),
+        c3 = pick(0, h - 1),
+        c4 = pick(w - 1, h - 1);
       const bg = {
         r: (c1.r + c2.r + c3.r + c4.r) / 4,
         g: (c1.g + c2.g + c3.g + c4.g) / 4,
         b: (c1.b + c2.b + c3.b + c4.b) / 4,
         a: (c1.a + c2.a + c3.a + c4.a) / 4,
       };
+      const bgTransparent = bg.a < 20;
+      const rgbThresh2 = 32 * 32;
 
-      // If corners are mostly transparent, use ALPHA to build the mask (black art on transparent)
-      const transparentBg = bg.a < 20;
-
-      // When background is opaque (e.g., white artboard), use RGB distance from bg color
-      // Thresholds tuned for print assets: 32 (~12.5%) on 0..255 scale works well
-      const rgbThresh = 32,
-        rgbThresh2 = rgbThresh * rgbThresh;
-
-      // Build hard mask: white (255) where effect is present, black elsewhere
       for (let i = 0; i < d.length; i += 4) {
         const r = d[i],
           g = d[i + 1],
           b = d[i + 2],
           a = d[i + 3];
         let on = false;
-
-        if (transparentBg) {
-          // α-driven: any visible pixel → ON
-          on = a >= 32;
+        if (bgTransparent) {
+          on = a >= 32; // use alpha when the artboard is transparent
         } else {
-          // color distance from background
           const dr = r - bg.r,
             dg = g - bg.g,
             db = b - bg.b;
-          const dist2 = dr * dr + dg * dg + db * db;
-          on = dist2 > rgbThresh2;
+          on = dr * dr + dg * dg + db * db > rgbThresh2;
         }
-
         const v = on ? 255 : 0;
-        d[i] = d[i + 1] = d[i + 2] = v; // grayscale
-        d[i + 3] = 255; // opaque texture for sampling
+        d[i] = d[i + 1] = d[i + 2] = v;
+        d[i + 3] = 255;
       }
 
       ctx.putImageData(img, 0, 0);
@@ -276,103 +264,85 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     }
 
     const loadOne = (jid, relPath, key) =>
-      new Promise((resolve, reject) => {
+      new Promise((resolve) => {
         const rel = normalizeRel(jid, relPath);
         const url = getAssetUrl(jid, rel);
 
         loader.load(
           url,
           (tex) => {
-            if (tex && tex.isTexture) {
-              const isEffect = /_(?:uv|spot_uv|foil|emboss)_(front|back)$/.test(
-                key
-              );
-              const isDie = /^die_/.test(key);
+            if (!tex || !tex.isTexture) return resolve(null);
 
-              if (isEffect) {
-                // Build a reliable binary mask; fall back to the image if canvas read fails
-                try {
-                  const maskCanvas = toBinaryMaskCanvas(tex.image);
-                  const maskTex = new THREE.CanvasTexture(maskCanvas);
-                  maskTex.flipY = true; // align with TextureLoader
-                  maskTex.colorSpace = THREE.NoColorSpace;
-                  maskTex.needsUpdate = true;
-                  tex.dispose();
-                  tex = maskTex;
-                } catch {
-                  const img = tex.image;
-                  const w = img.naturalWidth || img.width,
-                    h = img.naturalHeight || img.height;
-                  const c = document.createElement("canvas");
-                  c.width = w;
-                  c.height = h;
-                  const g = c.getContext("2d", { willReadFrequently: true });
-                  g.drawImage(img, 0, 0);
+            const isEffect = /_(?:uv|spot_uv|foil|emboss)_(front|back)$/.test(
+              key
+            );
+            const isDie = /^die_/.test(key);
 
-                  const id = g.getImageData(0, 0, w, h);
-                  const d = id.data;
-                  for (let i = 0; i < d.length; i += 4) {
-                    // alpha → white mask; ignore RGB completely
-                    const a = d[i + 3];
-                    const v = a > 8 ? 255 : 0;
-                    d[i] = d[i + 1] = d[i + 2] = v; // grayscale
-                    d[i + 3] = 255; // opaque for sampling
-                  }
-                  g.putImageData(id, 0, 0);
+            // orientation + color space
+            tex.flipY = true;
+            tex.colorSpace = isDie ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+            tex.needsUpdate = true;
 
-                  const maskTex = new THREE.CanvasTexture(c);
-                  maskTex.flipY = true; // ✅ align orientation
-                  maskTex.colorSpace = THREE.NoColorSpace;
-                  maskTex.needsUpdate = true;
-
-                  tex.dispose();
-                  tex = maskTex;
-                }
-              } else {
-                // Print / die
-                tex.colorSpace = isDie
-                  ? THREE.NoColorSpace
-                  : THREE.SRGBColorSpace;
-                if (key === "albedo_back") {
-                  tex.wrapS = THREE.RepeatWrapping;
-                  tex.repeat.x = -1;
-                  tex.offset.x = 1;
-                }
-              }
-
-              tex.anisotropy = 8;
-              tex.needsUpdate = true;
+            if (key === "albedo_back") {
+              // mirror the back so text isn't reversed
+              tex.wrapS = THREE.RepeatWrapping;
+              tex.repeat.x = -1;
+              tex.offset.x = 1;
             }
 
-            resolve(tex);
+            if (!isEffect) {
+              return resolve({ kind: "plain", tex });
+            }
+
+            // EFFECT: keep the source colors (for 'map') and build a hard mask (for 'alphaMap')
+            const colorTex = tex; // use PNG’s real colors (no tint)
+            let maskTex;
+            try {
+              const maskCanvas = toBinaryMaskCanvas(colorTex.image);
+              maskTex = new THREE.CanvasTexture(maskCanvas);
+            } catch {
+              maskTex = colorTex.clone();
+            }
+            maskTex.flipY = true;
+            maskTex.colorSpace = THREE.NoColorSpace;
+            maskTex.needsUpdate = true;
+
+            resolve({ kind: "effect", color: colorTex, mask: maskTex });
           },
           undefined,
-          (err) => {
-            console.error("❌ texture load failed:", { key, url, err });
-            resolve(null); // don't reject—let the rest load
-          }
+          () => resolve(null)
         );
       });
 
     const run = async () => {
-      try {
-        setTexLoading(true);
-        const entries = Object.entries(maps).filter(
-          ([, v]) => typeof v === "string"
-        );
-        if (!entries.length) {
-          if (!cancelled) setTextures({});
-          return;
-        }
-        const pairs = await Promise.all(
-          entries.map(async ([k, rel]) => [k, await loadOne(jobId, rel, k)])
-        );
-        if (!cancelled) setTextures(Object.fromEntries(pairs));
-      } catch {
+      const entries = Object.entries(maps).filter(
+        ([, v]) => typeof v === "string"
+      );
+      if (!entries.length) {
         if (!cancelled) setTextures({});
-      } finally {
-        if (!cancelled) setTexLoading(false);
+        return;
       }
+
+      const pairs = await Promise.all(
+        entries.map(async ([k, rel]) => [k, await loadOne(jobId, rel, k)])
+      );
+
+      // normalize into one flat dictionary the materials expect
+      const out = {};
+      for (const [k, val] of pairs) {
+        if (!val) continue;
+        if (val.kind === "plain") {
+          out[k] = val.tex; // e.g., albedo_front/back, die_front/back
+          continue;
+        }
+        if (val.kind === "effect") {
+          // k is like 'foil_front' or 'uv_back'
+          out[k] = val.mask; // <- alphaMap
+          out[`${k}_color`] = val.color; // <- map (actual PNG colors)
+        }
+      }
+
+      if (!cancelled) setTextures(out); // <-- keep the normalized object ONLY
     };
 
     if (!jobId || !maps || !Object.keys(maps).length) {
@@ -516,13 +486,12 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             polygonOffset
             polygonOffsetFactor={-1}
             polygonOffsetUnits={-1}
-            alphaMap={textures.foil_front}
-            alphaTest={0.1} // a touch more forgiving
-            color={"#B87333"}
+            map={textures.foil_front_color} // ← actual PNG colors (cyan/magenta)
+            alphaMap={textures.foil_front} // ← binary mask
+            alphaTest={0.1}
             metalness={1.0}
             roughness={0.2}
-            renderOrder={10}
-            envMapIntensity={2.0} // ✅ make the metal read
+            envMapIntensity={2.0}
           />
         </Plane>
       )}
@@ -539,16 +508,15 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             polygonOffset
             polygonOffsetFactor={-1}
             polygonOffsetUnits={-1}
-            alphaMap={textures.uv_front}
+            alphaMap={textures.uv_front} // mask only
             alphaTest={0.1}
-            color={"#ffffff"}
+            // Keep UV *clear*; no color tint
             metalness={0}
             roughness={0.04}
-            renderOrder={11}
             clearcoat={1.0}
             clearcoatRoughness={0.0}
-            envMapIntensity={1.5} // ✅ stronger specular
-            opacity={0.9}
+            envMapIntensity={1.5}
+            opacity={0.18}
           />
         </Plane>
       )}

@@ -1,22 +1,17 @@
 // src/api/client.js - COMPLETE FIXED VERSION WITH INTEGRATED WORKFLOW
 import axios from "axios";
 
+let _apiClient; // singleton across HMR
+
 // Get API URL from environment variables with fallback
 const getApiUrl = () => {
-  // Try environment variable first
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
-  }
-
-  // Fallback based on current location
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
   if (typeof window !== "undefined") {
     const hostname = window.location.hostname;
-
     if (hostname === "localhost" || hostname === "127.0.0.1") {
       return "https://54-234-136-10.nip.io";
     }
   }
-
   return "https://54-234-136-10.nip.io";
 };
 
@@ -25,15 +20,81 @@ const ASSET_BASE_URL =
   import.meta.env.VITE_ASSETS_BASE_URL || // e.g. http://<parser-host>:5001/assets
   `${API_BASE_URL}/proofs`;
 
+function buildApiClient() {
+  const inst = axios.create({
+    baseURL: API_BASE_URL,
+    timeout: 500000,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  // attach interceptors ONCE
+  inst.interceptors.request.use(
+    (config) => {
+      // attach an idempotency-ish header (useful for server logs)
+      if (!config.headers["X-Debug-Id"]) {
+        config.headers["X-Debug-Id"] = `${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2)}`;
+      }
+      console.log(
+        `📤 API Request: ${config.method?.toUpperCase()} ${config.baseURL}${
+          config.url
+        }`
+      );
+      return config;
+    },
+    (error) => {
+      console.error("❌ Request error:", error);
+      return Promise.reject(error);
+    }
+  );
+
+  inst.interceptors.response.use(
+    (response) => {
+      console.log(`✅ API Response: ${response.status} ${response.config.url}`);
+      return response;
+    },
+    (error) => {
+      console.error("❌ Response error:", {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+      });
+
+      if (error.code === "ECONNABORTED") {
+        return Promise.reject(
+          new Error("Request timeout - parser service might be busy")
+        );
+      }
+      if (error.response?.status === 403) {
+        return Promise.reject(
+          new Error("CORS error - frontend domain not allowed")
+        );
+      }
+      if (error.response?.status === 503) {
+        return Promise.reject(
+          new Error(
+            "Parser service unavailable - please try again in a few minutes"
+          )
+        );
+      }
+      return Promise.reject(error);
+    }
+  );
+
+  return inst;
+}
+
 console.log("🔗 API Base URL:", API_BASE_URL);
 
-const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 500000, // 3 minutes timeout for job operations
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
+const apiClient = _apiClient || (_apiClient = buildApiClient());
+
+if (!apiClient.__interceptorsApplied) {
+  apiClient.interceptors.request.use(/* … */);
+  apiClient.interceptors.response.use(/* … */);
+  apiClient.__interceptorsApplied = true;
+}
 
 // Add request interceptor for logging
 apiClient.interceptors.request.use(
@@ -85,7 +146,10 @@ apiClient.interceptors.response.use(
 );
 
 // Upload file
+let __uploadCounter = 0;
 export const uploadFile = async (file) => {
+  const callId = ++__uploadCounter;
+  console.log(`🧪 uploadFile() call #${callId}`);
   const formData = new FormData();
   formData.append("file", file);
 
@@ -96,7 +160,7 @@ export const uploadFile = async (file) => {
       `(${(file.size / (1024 * 1024)).toFixed(2)} MB)`
     );
 
-    const response = await apiClient.post("/upload/", formData, {
+    const response = await apiClient.post("/upload", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
       },

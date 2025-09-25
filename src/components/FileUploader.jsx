@@ -1,6 +1,6 @@
 // src/components/FileUploader.jsx - FIXED VERSION FOR ACTUAL PARSER OUTPUT
 import { useState, useRef, useCallback } from "react";
-import { processFile } from "../api/client";
+import { processFile, parseFile, pollJobStatus } from "../api/client";
 import { adaptParserJsonToViewer } from "../api/adapter";
 import "./FileUploader.css";
 
@@ -15,6 +15,8 @@ export default function FileUploader({ onFileUpload }) {
   const [processingDetails, setProcessingDetails] = useState({});
   const [retryCount, setRetryCount] = useState(0);
   const fileInputRef = useRef(null);
+  const isProcessingRef = useRef(false);
+  const lastUploadRef = useRef(null);
 
   // Constants
   const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
@@ -98,30 +100,25 @@ export default function FileUploader({ onFileUpload }) {
   const handleUpload = useCallback(async () => {
     if (!selectedFile) return;
 
-    const startTime = Date.now();
+    // 🔒 hard guard against double-starts (double-clicks, stray retries)
+    if (isProcessingRef.current) {
+      console.log("🚫 Upload already in progress — ignoring duplicate trigger");
+      return;
+    }
+    isProcessingRef.current = true;
 
+    const startTime = Date.now();
     try {
       console.log("🚀 Starting complete processing workflow...");
-
       setUploadStatus("processing");
       setCurrentStep("Starting file processing...");
       setProgress(0);
 
-      // Use processFile which handles the entire workflow
       const result = await processFile(
         selectedFile,
-        {
-          dpi: 600,
-          extractVector: true,
-          enableOCG: true,
-        },
+        { dpi: 600, extractVector: true, enableOCG: true },
         (progressUpdate) => {
-          // Handle progress updates from the integrated workflow
-          console.log("📊 Progress update:", progressUpdate);
-
           setProgress(progressUpdate.progress || 0);
-
-          // Update step description based on progress
           switch (progressUpdate.step) {
             case "uploading":
               setCurrentStep("Uploading file to server...");
@@ -130,17 +127,15 @@ export default function FileUploader({ onFileUpload }) {
               setCurrentStep("Submitting to AI parser service...");
               break;
             case "parsing":
-              if (progressUpdate.progress < 30) {
+              if (progressUpdate.progress < 30)
                 setCurrentStep("Loading and validating document...");
-              } else if (progressUpdate.progress < 50) {
+              else if (progressUpdate.progress < 50)
                 setCurrentStep("Extracting OCG layers from file...");
-              } else if (progressUpdate.progress < 70) {
+              else if (progressUpdate.progress < 70)
                 setCurrentStep("Processing vector paths and bounds...");
-              } else if (progressUpdate.progress < 90) {
+              else if (progressUpdate.progress < 90)
                 setCurrentStep("Generating layer definitions...");
-              } else {
-                setCurrentStep("Finalizing parse results...");
-              }
+              else setCurrentStep("Finalizing parse results...");
               break;
             case "completed":
               setCurrentStep("Processing completed successfully!");
@@ -154,38 +149,59 @@ export default function FileUploader({ onFileUpload }) {
         }
       );
 
-      // Success!
       setUploadStatus("success");
       setCurrentStep("Processing completed successfully!");
       setProgress(100);
+      const uploadPayload =
+        result.uploadResult?.data ?? result.uploadResult ?? null;
+      lastUploadRef.current = uploadPayload;
 
       const totalTime = Date.now() - startTime;
-
-      console.log(
-        `✅ Complete workflow finished in ${(totalTime / 1000).toFixed(2)}s`
-      );
-
-      // FIXED: Use the adapter to transform the raw parser JSON
-      console.log("🔄 Adapting parser result for 3D viewer...");
       const adapted = adaptParserJsonToViewer(result.parseResult);
-      
-      // Add processing metadata
       adapted.processingTime = totalTime;
       adapted.file = selectedFile;
 
-      console.log("✅ Adapted data structure:", adapted);
-      
       setProcessingDetails(adapted.parseResult);
-
-      // Call parent component callback with adapted data
-      if (onFileUpload) {
-        onFileUpload(adapted);
-      }
-    } catch (error) {
-      console.error("❌ Upload/Parse workflow failed:", error);
-      handleProcessingError(error);
+      onFileUpload?.(adapted);
+    } catch (err) {
+      console.error("❌ Upload/Parse workflow failed:", err);
+      // allow the retry logic to re-enter later
+      isProcessingRef.current = false;
+      handleProcessingError(err);
+      return;
     }
+
+    // success path: allow a new file later
+    isProcessingRef.current = false;
   }, [selectedFile, onFileUpload]);
+
+  const retryParseOnly = useCallback(async () => {
+    // guard: treat this like a real “processing” run
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    setUploadStatus("processing");
+
+    if (!lastUploadRef.current?.fileId) return handleUpload(); // fallback
+    try {
+      setCurrentStep("Retrying parse without re-upload...");
+      const parseJob = await parseFile(lastUploadRef.current.fileId, {
+        dpi: 600,
+        extractVector: true,
+        enableOCG: true,
+      });
+      const result = await pollJobStatus(parseJob.jobId, (s) =>
+        setProgress(30 + (s.progress || 0) * 0.7)
+      );
+      const adapted = adaptParserJsonToViewer(result);
+      adapted.file = selectedFile;
+      onFileUpload?.(adapted);
+      setUploadStatus("success");
+      isProcessingRef.current = false;
+    } catch (e) {
+      isProcessingRef.current = false;
+      handleProcessingError(e); // may try again or surface error
+    }
+  }, [onFileUpload, selectedFile]);
 
   // Handle processing errors with retry logic
   const handleProcessingError = useCallback(
@@ -209,7 +225,8 @@ export default function FileUploader({ onFileUpload }) {
 
         // Retry after delay
         setTimeout(() => {
-          handleUpload();
+          // handleUpload();
+          retryParseOnly();
         }, 3000 * (retryCount + 1)); // Exponential backoff
 
         return;
@@ -220,7 +237,7 @@ export default function FileUploader({ onFileUpload }) {
       setErrorMessage(error.message || "Processing failed");
       setCurrentStep("Processing failed");
     },
-    [retryCount, handleUpload]
+    [retryCount, retryParseOnly]
   );
 
   // Manual retry handler
@@ -334,7 +351,11 @@ export default function FileUploader({ onFileUpload }) {
           {/* Action buttons for unprocessed file */}
           {uploadStatus === "" && (
             <div className="upload-actions">
-              <button className="upload-btn primary" onClick={handleUpload}>
+              <button
+                className="upload-btn primary"
+                onClick={handleUpload}
+                disabled={uploadStatus === "processing"} // ✅ prevents double-clicks at the DOM level
+              >
                 🚀 Process with AI Parser
               </button>
               <button className="cancel-btn" onClick={handleReset}>
@@ -443,7 +464,8 @@ export default function FileUploader({ onFileUpload }) {
                     <div className="stat-item">
                       <span className="stat-label">Parse Confidence</span>
                       <span className="stat-value confidence">
-                        {Math.round(processingDetails.parsing.confidence * 100)}%
+                        {Math.round(processingDetails.parsing.confidence * 100)}
+                        %
                       </span>
                     </div>
                     <div className="stat-item">
@@ -456,7 +478,9 @@ export default function FileUploader({ onFileUpload }) {
                       <span className="stat-label">Processing Time</span>
                       <span className="stat-value">
                         {processingDetails.metadata?.processingTime
-                          ? `${(processingDetails.metadata.processingTime / 1000).toFixed(1)}s`
+                          ? `${(
+                              processingDetails.metadata.processingTime / 1000
+                            ).toFixed(1)}s`
                           : "N/A"}
                       </span>
                     </div>
@@ -509,7 +533,9 @@ export default function FileUploader({ onFileUpload }) {
                     <li>Ensure your file is a valid AI or PDF document</li>
                     <li>Check that the file size is under 100MB</li>
                     <li>Verify your internet connection is stable</li>
-                    <li>Try again in a few moments - the server might be busy</li>
+                    <li>
+                      Try again in a few moments - the server might be busy
+                    </li>
                   </ul>
                 </div>
               </div>
