@@ -1,4 +1,4 @@
-// src/components/ThreeViewer.jsx - UPDATED WITH CARD SELECTOR
+// src/components/ThreeViewer.jsx - FIXED VERSION
 import { Suspense, useState, useMemo, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import {
@@ -15,8 +15,10 @@ export default function ThreeViewer({ cardData }) {
   const [autoRotate, setAutoRotate] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [selectedCard, setSelectedCard] = useState("front");
+  const [envMapIntensity, setEnvMapIntensity] = useState(1.0);
+  const exposure = 1.0; // keep neutral for faithful colors
 
-  // Process the card data to extract information from actual parser structure
+  // Process the card data for the new structure - FIXED
   const processedCardInfo = useMemo(() => {
     if (!cardData) {
       return null;
@@ -27,43 +29,32 @@ export default function ThreeViewer({ cardData }) {
     const metadata = parseResult.metadata || {};
 
     // Determine which card to show
-    const cardKeys = Object.keys(cards);
+    const cardKeys = Object.keys(cards).filter(key => key === "front" || key === "back");
     let activeCardKey = selectedCard;
 
     // Auto-select first available card if selected doesn't exist
     if (cardKeys.length > 0 && !cards[selectedCard]) {
       activeCardKey = cardKeys.includes("front") ? "front" : cardKeys[0];
-      setSelectedCard(activeCardKey);
     }
 
-    const activeCardData = cards[activeCardKey] || cardData.layers || {};
+    const activeCardData = cards[activeCardKey] || {};
 
-    // Count total effects from active card
-    const effectsCount = Object.values(activeCardData).reduce(
-      (total, items) => total + (Array.isArray(items) ? items.length : 0),
-      0
-    );
+    // Count effects from new structure - FIXED
+    const effectsCount = 
+      (activeCardData.foilLayers?.length || 0) +
+      (activeCardData.uvLayers?.length || 0) +
+      (activeCardData.embossLayers?.length || 0);
 
-    // Create effects summary for UI display
-    const effects = {};
-    Object.entries(activeCardData).forEach(([type, items]) => {
-      if (Array.isArray(items) && items.length > 0) {
-        effects[type] = items;
-      }
-    });
-
-    // Extract file information
+    // Extract file information - FIXED
     const g = parseResult.geometry || {};
-    // v3 first-card geometry if available
     const gf0 = Array.isArray(g.front_cards) && g.front_cards[0]?.meta?.size_mm;
     const gb0 = Array.isArray(g.back_cards) && g.back_cards[0]?.meta?.size_mm;
-    // v2 fallback
     const v2f = g.front?.size_mm;
     const v2b = g.back?.size_mm;
 
     const primary = gf0 || gb0 || v2f || v2b;
     const dimensions = primary
-      ? { width: primary.w, height: primary.h, thickness: 0.35 }
+      ? { width: primary.w || 89, height: primary.h || 51, thickness: 0.35 }
       : parseResult.dimensions || { width: 89, height: 51, thickness: 0.35 };
 
     const processingTime = metadata.processingTime
@@ -79,7 +70,6 @@ export default function ThreeViewer({ cardData }) {
     return {
       originalFile,
       dimensions,
-      effects,
       effectsCount,
       processingTime,
       totalItems: metadata.totalItems || effectsCount,
@@ -89,17 +79,17 @@ export default function ThreeViewer({ cardData }) {
       activeCard: activeCardKey,
       fullCardData: {
         ...cardData,
-        layers: activeCardData,
+        cards: cards, // Pass the new structure
         activeCard: activeCardKey,
         dimensions,
-        jobId: parseResult.jobId || parseResult.job_id || cardData?.jobId, // <<< pass through for texture URLs
+        jobId: parseResult.jobId || parseResult.job_id || cardData?.jobId,
       },
     };
   }, [cardData, selectedCard]);
 
   useEffect(() => {
     const cards = cardData?.cards || {};
-    const keys = Object.keys(cards);
+    const keys = Object.keys(cards).filter(key => key === "front" || key === "back");
     if (keys.length > 0 && !cards[selectedCard]) {
       setSelectedCard(keys.includes("front") ? "front" : keys[0]);
     }
@@ -120,7 +110,6 @@ export default function ThreeViewer({ cardData }) {
   const {
     originalFile,
     dimensions,
-    effects,
     effectsCount,
     processingTime,
     totalItems,
@@ -142,37 +131,56 @@ export default function ThreeViewer({ cardData }) {
         />
       )}
 
-      {/* Controls Panel */}
+      {/* Enhanced Controls Panel */}
       {showControls && (
         <div className="viewer-controls">
-          <button
-            className={`control-btn ${autoRotate ? "active" : ""}`}
-            onClick={() => setAutoRotate(!autoRotate)}
-            title="Auto Rotate"
-          >
-            🔄
-          </button>
+          <div className="control-group">
+            <button
+              className={`control-btn ${autoRotate ? "active" : ""}`}
+              onClick={() => setAutoRotate(!autoRotate)}
+              title="Auto Rotate"
+            >
+              🔄
+            </button>
 
-          <button
-            className="control-btn"
-            onClick={() => setShowControls(false)}
-            title="Hide Controls"
-          >
-            👁️
-          </button>
+            <button
+              className="control-btn"
+              onClick={() => setShowControls(false)}
+              title="Hide Controls"
+            >
+              👁️
+            </button>
+          </div>
+
+          <div className="control-group">
+            <label>Reflections:</label>
+            <input
+              type="range"
+              min="0"
+              max="3"
+              step="0.1"
+              value={envMapIntensity}
+              onChange={(e) => setEnvMapIntensity(parseFloat(e.target.value))}
+            />
+            <span>{envMapIntensity.toFixed(1)}</span>
+          </div>
         </div>
       )}
 
       {/* 3D Canvas */}
       <Canvas
         className="three-canvas"
-        gl={{ toneMapping: THREE.NoToneMapping }}
+        gl={{ 
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: exposure
+        }}
+        dpr={[1, 2]}
         onCreated={({ gl }) => {
           gl.outputColorSpace = THREE.SRGBColorSpace;
         }}
       >
-        <color attach="background" args={["#0f1220"]} />{" "}
-        {/* deep blue charcoal */}
+        <color attach="background" args={["#0E1420"]} />
+        
         <Suspense fallback={<LoadingMesh />}>
           <PerspectiveCamera
             makeDefault
@@ -182,20 +190,23 @@ export default function ThreeViewer({ cardData }) {
             far={10}
           />
 
-          {/* Lighting */}
-          <ambientLight intensity={0.5} />
+          {/* Enhanced Lighting */}
+          <ambientLight intensity={0.4} />
           <directionalLight
-            position={[0.8, 1.2, 0.6]}
-            intensity={1.1}
+            position={[2, 4, 3]}
+            intensity={1.5 * envMapIntensity}
             castShadow
             shadow-mapSize={[1024, 1024]}
           />
-          <directionalLight position={[-0.6, 0.8, 0.4]} intensity={0.4} />
+          <directionalLight position={[-0.6, 0.8, 0.4]} intensity={0.6} />
 
-          {/* Softer reflections, nicer tint */}
-          <Environment preset="apartment" />
+          {/* Environment Map with adjustable intensity */}
+          <Environment 
+            preset="city" 
+            background={false}
+          />
 
-          {/* Soft ground contact */}
+          {/* Ground plane */}
           <mesh
             position={[0, -0.05, 0]}
             rotation={[-Math.PI / 2, 0, 0]}
@@ -204,12 +215,12 @@ export default function ThreeViewer({ cardData }) {
             <planeGeometry args={[0.6, 0.6]} />
             <meshStandardMaterial color="#0c0f1a" roughness={1} metalness={0} />
           </mesh>
-          {/* If you use drei@latest: <ContactShadows opacity={0.3} scale={1} blur={2} far={0.3} /> */}
 
+          {/* Main Card Model */}
           <CardModel
             cardData={fullCardData}
             autoRotate={autoRotate}
-            showEffects
+            showEffects={true}
           />
 
           <OrbitControls
@@ -224,7 +235,7 @@ export default function ThreeViewer({ cardData }) {
         </Suspense>
       </Canvas>
 
-      {/* Info Panel */}
+      {/* Enhanced Info Panel */}
       <div className="card-info">
         <h4>
           {originalFile}
@@ -233,7 +244,7 @@ export default function ThreeViewer({ cardData }) {
           )}
         </h4>
         <div className="info-stats">
-          <span>Items: {effectsCount}</span>
+          <span>Layers: {effectsCount}</span>
           <span>
             Size: {Math.round(dimensions.width)}×{Math.round(dimensions.height)}
             mm
@@ -243,14 +254,32 @@ export default function ThreeViewer({ cardData }) {
         </div>
 
         <div className="effects-list">
-          {Object.entries(effects).map(([effectType, items]) => (
-            <div key={effectType} className="effect-item">
-              <span className={`effect-badge ${effectType}`}>
-                {effectType.replace("_", " ")}:{" "}
-                {Array.isArray(items) ? items.length : 1}
-              </span>
-            </div>
-          ))}
+          {/* Show new structure layer counts - FIXED */}
+          {cards[activeCard] && (
+            <>
+              {(cards[activeCard].foilLayers?.length || 0) > 0 && (
+                <div className="effect-item">
+                  <span className="effect-badge foil">
+                    Foil: {cards[activeCard].foilLayers.length} layers
+                  </span>
+                </div>
+              )}
+              {(cards[activeCard].uvLayers?.length || 0) > 0 && (
+                <div className="effect-item">
+                  <span className="effect-badge spot_uv">
+                    UV: {cards[activeCard].uvLayers.length} layers
+                  </span>
+                </div>
+              )}
+              {(cards[activeCard].embossLayers?.length || 0) > 0 && (
+                <div className="effect-item">
+                  <span className="effect-badge emboss">
+                    Emboss: {cards[activeCard].embossLayers.length} layers
+                  </span>
+                </div>
+              )}
+            </>
+          )}
 
           {effectsCount === 0 && (
             <div className="effect-item">
@@ -259,6 +288,13 @@ export default function ThreeViewer({ cardData }) {
               </span>
             </div>
           )}
+        </div>
+
+        {/* Rendering Mode Indicator */}
+        <div className="rendering-mode">
+          <span className="mode-indicator">
+            🎨 Per-Image Overlay Mode
+          </span>
         </div>
       </div>
 
@@ -276,7 +312,7 @@ export default function ThreeViewer({ cardData }) {
   );
 }
 
-// Loading component for Suspense
+// Loading component
 function LoadingMesh() {
   return (
     <mesh position={[0, 0, 0]}>
