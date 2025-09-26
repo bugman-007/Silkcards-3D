@@ -234,14 +234,15 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               return;
             }
 
-            tex.flipY = true;
+            tex.flipY = true; // This is correct for Three.js coordinate system
             tex.colorSpace = THREE.SRGBColorSpace;
 
-            // Apply mirroring for back side textures
+            // FIXED: Apply proper mirroring for back side (X flip only, not Y)
             if (isBack) {
               tex.wrapS = THREE.RepeatWrapping;
-              tex.repeat.x = -1;
-              tex.offset.x = 1;
+              tex.repeat.x = -1; // Mirror horizontally (X-axis)
+              tex.offset.x = 1; // Adjust offset for proper positioning
+              // DO NOT flip Y again - tex.flipY=true is sufficient
             }
 
             tex.needsUpdate = true;
@@ -566,7 +567,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         }
       });
 
-      // Foil Layers - Ink (unlit colors)
+      // Foil Layers - Ink (unlit colors) - FIXED VERSION
       (sideTextures.foilLayers || []).forEach((foilLayer, index) => {
         if (foilLayer?.colorTex && foilLayer?.maskTex) {
           stacks.push(
@@ -577,23 +578,24 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               renderOrder++,
               {
                 __ink: true,
-                map: foilLayer.colorTex,
+                map: foilLayer.colorTex, // Use the original color texture
                 alphaMap: foilLayer.maskTex,
                 alphaTest: 0.1,
-                toneMapped: false,
-                metalness: 1.0,
-                roughness: 0.12,
-                color: new THREE.Color(0xffffff),
-                envMapIntensity: 1.8,
-                opacity: 1,
-                blending: THREE.AdditiveBlending
+                toneMapped: false, // Preserve exact colors
+                // REMOVE these physical material properties for basic material:
+                // metalness: 1.0,    // ← Remove
+                // roughness: 0.12,   // ← Remove
+                // color: new THREE.Color(0xffffff), // ← Remove (let the texture determine color)
+                // envMapIntensity: 1.8, // ← Remove
+                // opacity: 0.35,     // ← Remove
+                // blending: THREE.AdditiveBlending // ← Remove or change to NormalBlending
               }
             )
           );
         }
       });
 
-      // Foil Layers - Metal (reflective highlights)
+      // Foil Layers - Metal (reflective highlights) - FIXED VERSION
       (sideTextures.foilLayers || []).forEach((foilLayer, index) => {
         if (foilLayer?.maskTex) {
           stacks.push(
@@ -605,10 +607,12 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               {
                 alphaMap: foilLayer.maskTex,
                 alphaTest: 0.1,
-                metalness: 1.0,
-                roughness: 0.1,
-                color: new THREE.Color(0xffffff),
-                envMapIntensity: 2.0,
+                metalness: 0.9, // Slightly reduced for better color reflection
+                roughness: 0.15, // Slightly increased for more natural look
+                color: new THREE.Color(0xffffff), // White base to reflect environment
+                envMapIntensity: 1.2, // Reduced to let ink colors show through
+                opacity: 0.6, // Increased opacity for stronger effect
+                blending: THREE.AdditiveBlending,
               }
             )
           );
