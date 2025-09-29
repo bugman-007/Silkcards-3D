@@ -39,25 +39,33 @@
     } catch (e) {}
     var sel = app.selection;
     if (!sel || !sel.length) return;
-    for (var i = 0; i < sel.length; i++) {
-      var it = sel[i];
+
+    function paintDeep(node) {
+      if (!node) return;
       try {
-        it.stroked = false;
+        node.stroked = false;
       } catch (_) {}
       try {
-        it.filled = true;
-        it.fillColor = white();
+        node.filled = true;
+        node.fillColor = white();
       } catch (_) {}
-      if (it.typename === "CompoundPathItem") {
-        for (var p = 0; p < it.pathItems.length; p++) {
+
+      if (node.typename === "GroupItem" && node.pageItems) {
+        for (var k = 0; k < node.pageItems.length; k++)
+          paintDeep(node.pageItems[k]);
+      }
+      if (node.typename === "CompoundPathItem" && node.pathItems) {
+        for (var p = 0; p < node.pathItems.length; p++) {
           try {
-            it.pathItems[p].stroked = false;
-            it.pathItems[p].filled = true;
-            it.pathItems[p].fillColor = white();
+            node.pathItems[p].stroked = false;
+            node.pathItems[p].filled = true;
+            node.pathItems[p].fillColor = white();
           } catch (_) {}
         }
       }
     }
+
+    for (var i = 0; i < sel.length; i++) paintDeep(sel[i]);
   }
 
   function writeJSONFile(absPath, obj) {
@@ -136,13 +144,21 @@
         } catch (_e1) {}
       }
     }
-    // pageItems under this container (groups, etc.) – clear 'hidden' where available
+    // pageItems: unlock + unhide; also recurse into groups
     if (container.pageItems) {
       for (var j = 0; j < container.pageItems.length; j++) {
         var it = container.pageItems[j];
         try {
           if (typeof it.hidden !== "undefined") it.hidden = !v ? true : false;
         } catch (_e2) {}
+        try {
+          if (typeof it.locked !== "undefined") it.locked = false;
+        } catch (_e3) {}
+        if (it.typename === "GroupItem") {
+          try {
+            setVisibleDeep(it, v);
+          } catch (_e4) {}
+        }
       }
     }
   }
@@ -372,9 +388,8 @@
 
   function pickCrop(sideCardBucket) {
     // Prefer die → then print → then union of effects
-    var b = unionBoundsPt(sideCardBucket.die);
-    if (!b) b = unionBoundsPt(sideCardBucket.print);
-    if (!b)
+    var b = unionBoundsPt(sideCardBucket.print);
+    if (!b) {
       b = unionBoundsPt(
         [].concat(
           sideCardBucket.foil,
@@ -383,6 +398,13 @@
           sideCardBucket.deboss
         )
       );
+    }
+    if (!b) {
+      // last resort: active artboard
+      var AB =
+        doc.artboards[doc.artboards.getActiveArtboardIndex()].artboardRect; // [L,T,R,B]
+      b = [AB[0], AB[1], AB[2], AB[3]];
+    }
     return b;
   }
 
@@ -624,11 +646,29 @@
     // ---- Foil ----
     if (cardBucket.foil.length > 0) {
       withLayers("", [pref + "_foil"], function () {
+        // Same artboard/crop for both exports
         addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+
+        // A) COLOR: export the visible foil art as-is (keeps designer colors)
+        app.executeMenuCommand("deselectall");
         app.executeMenuCommand("selectall");
-        normalizeSelectionToWhite(); // <<< add this
+        pngExport(
+          doc,
+          absPath(pref + "_foil_color.png"),
+          scalePercent,
+          true,
+          true
+        );
+
+        // B) MASK: whiten selection, export white-on-transparent mask
+        app.executeMenuCommand("deselectall");
+        app.executeMenuCommand("selectall");
+        normalizeSelectionToWhite();
         pngExport(doc, absPath(pref + "_foil.png"), scalePercent, true, true);
-        rel.foil = relPath(pref + "_foil.png");
+
+        // Manifest paths
+        rel.foil = relPath(pref + "_foil.png"); // mask
+        rel.foil_color = relPath(pref + "_foil_color.png"); // color
       });
     }
     // ---- Spot UV ----
@@ -638,8 +678,9 @@
         [pref + "_spot_uv", pref + "_spot-uv", pref + "_uv"],
         function () {
           addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+          app.executeMenuCommand("deselectall");
           app.executeMenuCommand("selectall");
-          normalizeSelectionToWhite(); // <<< add this
+          normalizeSelectionToWhite();
           pngExport(doc, absPath(pref + "_uv.png"), scalePercent, true, true);
           rel.uv = relPath(pref + "_uv.png");
         }
@@ -650,8 +691,9 @@
     if (cardBucket.emboss.length > 0 || cardBucket.deboss.length > 0) {
       withLayers("", [pref + "_emboss", pref + "_deboss"], function () {
         addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+        app.executeMenuCommand("deselectall");
         app.executeMenuCommand("selectall");
-        normalizeSelectionToWhite(); // <<< add this
+        normalizeSelectionToWhite();
         pngExport(doc, absPath(pref + "_emboss.png"), scalePercent, true, true);
         rel.emboss = relPath(pref + "_emboss.png");
       });
@@ -673,36 +715,17 @@
         ],
         function () {
           addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+          // 1) SVG export of the visible die art
           svgExport(doc, absPath(pref + "_diecut.svg"));
-          app.executeMenuCommand("selectall"); // select visible die art
+
+          // 2) Build the white-on-transparent mask on the same canvas
+          app.executeMenuCommand("deselectall");
+          app.executeMenuCommand("selectall");
           try {
             app.executeMenuCommand("expandStyle");
-          } catch (e) {} // outline strokes to shapes if needed
+          } catch (e) {}
+          normalizeSelectionToWhite();
 
-          // fill white, no strokes
-          var sel = app.selection;
-          if (sel && sel.length) {
-            for (var i = 0; i < sel.length; i++) {
-              var it = sel[i];
-              try {
-                it.stroked = false;
-              } catch (_) {}
-              try {
-                it.filled = true;
-                it.fillColor = white();
-              } catch (_) {}
-              if (it.typename === "CompoundPathItem") {
-                for (var p = 0; p < it.pathItems.length; p++) {
-                  try {
-                    it.pathItems[p].stroked = false;
-                    it.pathItems[p].filled = true;
-                    it.pathItems[p].fillColor = white();
-                  } catch (_) {}
-                }
-              }
-            }
-            // now export the mask; white (1.0) will keep, black (0) will cut
-          }
           pngExport(
             doc,
             absPath(pref + "_diecut_mask.png"),
@@ -710,6 +733,7 @@
             true,
             true
           );
+
           rel.die_svg = relPath(pref + "_diecut.svg");
           rel.die_png = relPath(pref + "_diecut_mask.png");
         }

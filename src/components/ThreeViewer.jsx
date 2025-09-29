@@ -229,7 +229,7 @@ export default function ThreeViewer({ cardData }) {
             enableRotate
             minDistance={0.05}
             maxDistance={0.5}
-            maxPolarAngle={Math.PI / 2}
+            // maxPolarAngle={Math.PI / 2}
             autoRotate={autoRotate}
           />
         </Suspense>
