@@ -137,12 +137,13 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         null;
 
       const dieCutUrl =
-        maps.diecut_mask ||
-        maps.diecut_png ||
-        rec?.die_png ||
-        rec?.die_mask ||
-        maps.diecut_svg ||
-        rec?.die_svg ||
+        maps.die_png || // Parser's PNG output - HIGHEST PRIORITY
+        maps.diecut_mask || // Alternative PNG name
+        maps.diecut_png || // Alternative PNG name
+        rec?.die_png || // Direct from record
+        maps.die_svg || // SVG fallback (only if no PNG)
+        rec?.die_svg || // SVG from record
+        maps.diecut_svg || // SVG alternative
         rec?.diecut_mask ||
         rec?.diecut_png ||
         rec?.diecut_svg ||
@@ -150,18 +151,20 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         rec?.diecut ||
         null;
 
-      // CRITICAL DEBUG: Log ALL available die-cut options
-      console.log("=== DIE-CUT DEBUG ===", {
-        mapsKeys: maps ? Object.keys(maps) : [],
-        mapsDiecutMask: maps.diecut_mask,
-        mapsDiecutPng: maps.diecut_png,
-        mapsDiecutSvg: maps.diecut_svg,
-        recDiePng: rec?.die_png,
-        recDieMask: rec?.die_mask,
-        recDieSvg: rec?.die_svg,
-        finalDieCutUrl: dieCutUrl,
-        hasMaps: !!rec?.maps,
-        recKeys: rec ? Object.keys(rec) : [],
+      console.log("DIE-CUT RESOLUTION - FINAL:", {
+        hasPng: !!(
+          maps.die_png ||
+          maps.diecut_mask ||
+          maps.diecut_png ||
+          rec?.die_png
+        ),
+        hasSvg: !!(maps.die_svg || rec?.die_svg),
+        finalUrl: dieCutUrl,
+        fileType: dieCutUrl?.toLowerCase().endsWith(".png")
+          ? "PNG"
+          : dieCutUrl?.toLowerCase().endsWith(".svg")
+          ? "SVG"
+          : "NONE",
       });
 
       const foilMask = maps.foil || rec?.foil || rec?.foil_mask || null;
@@ -206,6 +209,8 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         dieCutUrl:
           front.maps?.diecut_mask ||
           front.maps?.diecut_png ||
+          front.maps?.die_png || // ← add
+          front.maps?.die_svg ||
           front.dieCutUrl ||
           front.die_png ||
           front.die_mask ||
@@ -313,11 +318,15 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     const loader = new THREE.TextureLoader();
     loader.setCrossOrigin("anonymous");
 
+    const isAbsoluteUrl = (s) =>
+      typeof s === "string" && /^https?:\/\//i.test(s);
+    const isRootAbsolute = (s) => typeof s === "string" && s.startsWith("/");
     const normalizeRel = (jid, relPath) => {
       if (typeof relPath !== "string" || !relPath) return null;
+      if (isAbsoluteUrl(relPath) || isRootAbsolute(relPath)) return relPath;
       let p = relPath.replace(/^[\/\s]+/, "");
-      p = p.replace(/^assets\/[^/]+\//, "");
-      p = p.replace(/^jobs\/[^/]+\/assets\//, "");
+      p = p.replace(/^assets\/[^/]+\//i, "");
+      p = p.replace(/^jobs\/[^/]+\/assets\//i, "");
       return p;
     };
 
@@ -329,7 +338,10 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         }
 
         const rel = normalizeRel(jid, relPath);
-        const url = getAssetUrl(jid, rel);
+        const url =
+          /^https?:\/\//i.test(rel) || rel.startsWith("/")
+            ? rel
+            : getAssetUrl(jid, rel);
 
         console.log(`Loading texture: ${url} from original path: ${relPath}`);
 
@@ -348,8 +360,13 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
 
             // Convert SVG to PNG canvas
             const canvas = document.createElement("canvas");
-            canvas.width = img.width;
-            canvas.height = img.height;
+            // Default to a safe raster size if the SVG reports zero dimensions
+            const fallbackW = 2048,
+              fallbackH = 1232;
+            const w = img.width || img.naturalWidth || fallbackW;
+            const h = img.height || img.naturalHeight || fallbackH;
+            canvas.width = w;
+            canvas.height = h;
             const ctx = canvas.getContext("2d");
 
             // Draw SVG to canvas

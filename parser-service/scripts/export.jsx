@@ -700,6 +700,7 @@
     }
 
     // ---- Die-cut (svg + mask png) ----
+    // ---- Die-cut (svg + mask png) ----
     if (cardBucket.die.length > 0) {
       withLayers(
         "",
@@ -715,6 +716,7 @@
         ],
         function () {
           addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
+
           // 1) SVG export of the visible die art
           svgExport(doc, absPath(pref + "_diecut.svg"));
 
@@ -726,6 +728,7 @@
           } catch (e) {}
           normalizeSelectionToWhite();
 
+          // CRITICAL FIX: Always export PNG mask with proper naming
           pngExport(
             doc,
             absPath(pref + "_diecut_mask.png"),
@@ -734,8 +737,15 @@
             true
           );
 
+          // 3) Set BOTH SVG and PNG in manifest - frontend prefers PNG
           rel.die_svg = relPath(pref + "_diecut.svg");
-          rel.die_png = relPath(pref + "_diecut_mask.png");
+          rel.die_png = relPath(pref + "_diecut_mask.png"); // This is what frontend needs
+
+          console.log("Die-cut exports:", {
+            svg: rel.die_svg,
+            png: rel.die_png,
+            card: pref,
+          });
         }
       );
     }

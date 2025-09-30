@@ -1,8 +1,3 @@
-// src/api/adapter.js
-/**
- * Adapt the Windows parser/Illustrator manifest into what the viewer expects.
- * NEW: Output arrays per effect type for per-image overlay rendering
- */
 export function adaptParserJsonToViewer(data) {
   if (!data || typeof data !== "object") {
     throw new Error("adaptParserJsonToViewer: invalid input");
@@ -36,77 +31,92 @@ export function adaptParserJsonToViewer(data) {
       albedoUrl: null,
       dieCutUrl: null,
       foilLayers: [], // { colorUrl, maskUrl }
-      uvLayers: [],   // { maskUrl }
+      uvLayers: [], // { maskUrl }
       embossLayers: [], // { maskUrl, type: 'emboss'|'deboss' }
     };
 
     // Helper to extract URLs from maps or geometry cards
     const extractUrls = (obj) => {
       if (!obj || typeof obj !== "object") return;
-      
+
       Object.entries(obj).forEach(([key, value]) => {
         if (typeof value !== "string") return;
-        
+
         const filename = value.toLowerCase();
-        const isThisSide = filename.includes(`${side}_`) || 
-                          (side === 'front' && !filename.includes('back_')) ||
-                          (side === 'back' && !filename.includes('front_'));
-        
+        const isThisSide =
+          filename.includes(`${side}_`) ||
+          (side === "front" && !filename.includes("back_")) ||
+          (side === "back" && !filename.includes("front_"));
+
         if (!isThisSide) return;
 
         // Albedo detection
-        if (!result.albedoUrl && (filename.includes('_albedo.') || filename.includes('_print.'))) {
+        if (
+          !result.albedoUrl &&
+          (filename.includes("_albedo.") || filename.includes("_print."))
+        ) {
           result.albedoUrl = value;
         }
-        // Die-cut detection
-        else if (!result.dieCutUrl && (
-          filename.includes('_die.') || 
-          filename.includes('diecut') || 
-          filename.includes('laser_cut') ||
-          filename.includes('_cut.')
-        )) {
-          result.dieCutUrl = value;
+        // Die-cut (PNG should override SVG)
+        else if (
+          filename.includes("_die.") ||
+          filename.includes("diecut") ||
+          filename.includes("laser_cut") ||
+          filename.includes("_cut.")
+        ) {
+          const isPng = filename.endsWith(".png");
+          if (!result.dieCutUrl) {
+            result.dieCutUrl = value; // first seen
+          }
+          // Prefer PNG if found later
+          if (isPng) {
+            result.dieCutUrl = value;
+          }
         }
         // Foil detection
-        else if (filename.includes('_foil')) {
+        else if (filename.includes("_foil")) {
           result.foilLayers.push({
             colorUrl: value,
             maskUrl: value, // Same file for both initially
-            id: `${side}_foil_${result.foilLayers.length}`
+            id: `${side}_foil_${result.foilLayers.length}`,
           });
         }
         // UV detection
-        else if (filename.includes('_uv') || filename.includes('spot_uv') || filename.includes('spot-uv')) {
+        else if (
+          filename.includes("_uv") ||
+          filename.includes("spot_uv") ||
+          filename.includes("spot-uv")
+        ) {
           result.uvLayers.push({
             maskUrl: value,
-            id: `${side}_uv_${result.uvLayers.length}`
+            id: `${side}_uv_${result.uvLayers.length}`,
           });
         }
         // Emboss/Deboss detection
-        else if (filename.includes('emboss') || filename.includes('deboss')) {
+        else if (filename.includes("emboss") || filename.includes("deboss")) {
           result.embossLayers.push({
             maskUrl: value,
-            type: filename.includes('deboss') ? 'deboss' : 'emboss',
-            id: `${side}_emboss_${result.embossLayers.length}`
+            type: filename.includes("deboss") ? "deboss" : "emboss",
+            id: `${side}_emboss_${result.embossLayers.length}`,
           });
         }
       });
     };
 
-    // Extract from multiple possible locations
+    // Prefer V3 per-card entries FIRST so we see die_png before legacy
+    const cardsArr = data?.maps?.[`${side}_cards`];
+    if (Array.isArray(cardsArr)) {
+      cardsArr.forEach((card) => extractUrls(card?.maps));
+    }
+    // Then legacy side & geometry
     extractUrls(data?.maps?.[side]);
     extractUrls(data?.geometry?.[side]);
-    
-    // Also check geometry cards arrays (v3 format)
-    if (Array.isArray(data?.geometry?.[`${side}_cards`])) {
-      data.geometry[`${side}_cards`].forEach(card => extractUrls(card?.maps));
-    }
 
     return result;
   };
 
-  const frontData = buildSideData('front');
-  const backData = buildSideData('back');
+  const frontData = buildSideData("front");
+  const backData = buildSideData("back");
 
   // ----- Keep original items for fallback -----
   const artboardBounds = data?.doc?.artboards?.[0]?.bounds || null;
@@ -121,7 +131,7 @@ export function adaptParserJsonToViewer(data) {
     // NEW: Structured data for per-image rendering
     cards: {
       front: frontData,
-      back: backData
+      back: backData,
     },
     // Legacy: keep for fallback
     maps: {}, // deprecated but kept for compatibility
@@ -146,9 +156,12 @@ function separateCardsFromItems(items, artboardBounds) {
     back: mkBucket(),
   };
 
-  const abCenterMm = artboardBounds && typeof artboardBounds.x === "number"
-    ? (artboardBounds.x + (artboardBounds.x2 ?? artboardBounds.x + (artboardBounds.w || 0))) / 2
-    : null;
+  const abCenterMm =
+    artboardBounds && typeof artboardBounds.x === "number"
+      ? (artboardBounds.x +
+          (artboardBounds.x2 ?? artboardBounds.x + (artboardBounds.w || 0))) /
+        2
+      : null;
 
   const union = { front: null, back: null };
   const addToUnion = (side, b) => {
@@ -212,19 +225,33 @@ function mkBucket() {
 
 function getEffectKey(fin) {
   switch (fin) {
-    case "foil": return "foil";
-    case "uv": case "spot_uv": case "spot-uv": case "spotuv": return "spot_uv";
-    case "emboss": return "emboss";
-    case "deboss": return "deboss";
-    case "die": case "die_cut": case "die-cut": case "diecut": return "die_cut";
-    default: return "print";
+    case "foil":
+      return "foil";
+    case "uv":
+    case "spot_uv":
+    case "spot-uv":
+    case "spotuv":
+      return "spot_uv";
+    case "emboss":
+      return "emboss";
+    case "deboss":
+      return "deboss";
+    case "die":
+    case "die_cut":
+    case "die-cut":
+    case "diecut":
+      return "die_cut";
+    default:
+      return "print";
   }
 }
 
 function normalizeBounds(b) {
   if (!b || typeof b !== "object") return null;
-  const x = num(b.x), y = num(b.y);
-  const w = num(b.w ?? b.width), h = num(b.h ?? b.height);
+  const x = num(b.x),
+    y = num(b.y);
+  const w = num(b.w ?? b.width),
+    h = num(b.h ?? b.height);
   const x2 = num(b.x2 ?? (isFinite(x) && isFinite(w) ? x + w : undefined));
   const y2 = num(b.y2 ?? (isFinite(y) && isFinite(h) ? y + h : undefined));
   return { x, y, w, h, x2, y2, width: w, height: h };
@@ -235,9 +262,17 @@ function num(v) {
 }
 
 function finishFromLayer(layerPath) {
-  const lp = (Array.isArray(layerPath) ? layerPath.join("_") : String(layerPath || "")).toLowerCase();
+  const lp = (
+    Array.isArray(layerPath) ? layerPath.join("_") : String(layerPath || "")
+  ).toLowerCase();
   if (lp.includes("foil")) return "foil";
-  if (lp.includes("spot_uv") || lp.includes("spot-uv") || lp.includes("spotuv") || lp.includes("uv")) return "spot_uv";
+  if (
+    lp.includes("spot_uv") ||
+    lp.includes("spot-uv") ||
+    lp.includes("spotuv") ||
+    lp.includes("uv")
+  )
+    return "spot_uv";
   if (lp.includes("emboss")) return "emboss";
   if (lp.includes("deboss")) return "deboss";
   if (lp.includes("die") && lp.includes("cut")) return "die_cut";
@@ -245,14 +280,19 @@ function finishFromLayer(layerPath) {
 }
 
 function sideOf(item, abCenterMm) {
-  const top = Array.isArray(item?.layerPath) && item.layerPath.length ? String(item.layerPath[0]).toLowerCase() : "";
+  const top =
+    Array.isArray(item?.layerPath) && item.layerPath.length
+      ? String(item.layerPath[0]).toLowerCase()
+      : "";
   if (top.includes("front")) return "front";
   if (top.includes("back")) return "back";
 
-  const left = item?.bounds && typeof item.bounds.x === "number" ? item.bounds.x : undefined;
+  const left =
+    item?.bounds && typeof item.bounds.x === "number"
+      ? item.bounds.x
+      : undefined;
   if (typeof left === "number" && typeof abCenterMm === "number") {
     return left < abCenterMm ? "front" : "back";
   }
   return "front";
 }
-

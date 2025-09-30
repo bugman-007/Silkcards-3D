@@ -15,46 +15,54 @@ def absolutize_manifest(m: dict) -> dict:
         return m
 
     base = f"{PUBLIC_BACKEND_ORIGIN}/proofs/{job_id}/"
+    
+    def _basename(rel):
+        s = str(rel).replace("\\", "/")
+        return s.split("/")[-1] if "/" in s else s
 
-    # FIX: v3 per-card maps - CORRECTED PATH (top-level front_cards/back_cards)
+    # Track die-cut files for debugging
+    diecut_files = []
+
+    # v3 per-card maps actually live under m["maps"]["front_cards"/"back_cards"]
+    v3 = (m.get("maps") or {})
     for side in ("front_cards", "back_cards"):
-        arr = m.get(side, [])
-        for card in arr or []:
+        arr = v3.get(side, []) or []
+        for card in arr:
             if not card:
                 continue
             maps = card.get("maps", {}) or {}
             for key, rel in list(maps.items()):
                 if not rel:
                     continue
-                # ROBUST FIX: Better filename extraction
-                rel_str = str(rel)
-                # Handle both forward and backward slashes
-                rel_str = rel_str.replace("\\", "/")
-                # Extract just the filename regardless of path structure
-                if "/" in rel_str:
-                    name = rel_str.split("/")[-1]
-                else:
-                    name = rel_str
-                maps[key] = base + name
+                maps[key] = base + _basename(rel)
+                if 'die' in key.lower() or 'cut' in key.lower():
+                    diecut_files.append(f"{side} {key}: {maps[key]}")
                 print(f"DEBUG: Absolutized {key}: {rel} -> {maps[key]}")
 
-    # v2: legacy single-side maps (keep existing logic)
+    # v2: legacy single-side maps
     maps = m.get("maps", {})
     for side in ("front", "back"):
         side_maps = maps.get(side)
         if not side_maps:
             continue
         for k, rel in list(side_maps.items()):
-            name = str(rel).split(f"assets/{job_id}/")[-1]
-            side_maps[k] = base + name
+            if rel:
+                side_maps[k] = base + _basename(rel)
+                if 'die' in k.lower() or 'cut' in k.lower():
+                    diecut_files.append(f"{side} {k}: {side_maps[k]}")
 
     # diecut on geometry if present
     geom = m.get("geometry", {})
-    for die_key in ("diecut_svg", "diecut_png"):
+    for die_key in ("diecut_svg", "diecut_png", "die_svg", "die_png"):
         rel = geom.get(die_key)
         if rel:
-            name = str(rel).split(f"assets/{job_id}/")[-1]
-            geom[die_key] = base + name
+            geom[die_key] = base + _basename(rel)
+            diecut_files.append(f"geometry {die_key}: {geom[die_key]}")
+
+    # Log all die-cut files for debugging
+    print(f"=== DIE-CUT FILES FOUND ({len(diecut_files)}) ===")
+    for file_info in diecut_files:
+        print(f"  {file_info}")
 
     m["assets_base_url"] = base
     return m
