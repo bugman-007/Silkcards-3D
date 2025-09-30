@@ -1,4 +1,4 @@
-// src/components/CardModel.jsx - FIXED VERSION
+// src/components/CardModel.jsx - OPTIMIZED VERSION
 import { useRef, useMemo, useState, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Text, Plane } from "@react-three/drei";
@@ -6,7 +6,6 @@ import * as THREE from "three";
 import { getAssetUrl } from "../api/client";
 import EffectOverlay from "./EffectOverlay";
 import BaseCard from "./BaseCard";
-import { metalness, roughness } from "three/tsl";
 
 // Helper to check if mask texture has meaningful content
 function maskLooksFilled(tex) {
@@ -58,50 +57,32 @@ function toBinaryMaskCanvas(image) {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(image, 0, 0);
 
-  const img = ctx.getImageData(0, 0, w, h);
-  const d = img.data;
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(image, 0, 0, w, h);
 
-  // Estimate background from 4 corners
-  const pick = (x, y) => {
-    const i = (y * w + x) * 4;
-    return { r: d[i], g: d[i + 1], b: d[i + 2], a: d[i + 3] };
-  };
-  const c1 = pick(0, 0),
-    c2 = pick(w - 1, 0),
-    c3 = pick(0, h - 1),
-    c4 = pick(w - 1, h - 1);
-  const bg = {
-    r: (c1.r + c2.r + c3.r + c4.r) / 4,
-    g: (c1.g + c2.g + c3.g + c4.g) / 4,
-    b: (c1.b + c2.b + c3.b + c4.b) / 4,
-    a: (c1.a + c2.a + c3.a + c4.a) / 4,
-  };
-  const bgTransparent = bg.a < 20;
-  const rgbThresh2 = 32 * 32;
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
 
+  let hasContent = false;
   for (let i = 0; i < d.length; i += 4) {
     const r = d[i],
       g = d[i + 1],
       b = d[i + 2],
       a = d[i + 3];
-    let on = false;
-    if (bgTransparent) {
-      on = a >= 32;
-    } else {
-      const dr = r - bg.r,
-        dg = g - bg.g,
-        db = b - bg.b;
-      on = dr * dr + dg * dg + db * db > rgbThresh2;
-    }
-    const v = on ? 255 : 0;
-    d[i] = d[i + 1] = d[i + 2] = v;
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    const effectiveAlpha = a / 255;
+    const combined = luminance * effectiveAlpha;
+    const alphaValue = 255 - Math.round(combined * 255);
+
+    d[i] = d[i + 1] = d[i + 2] = alphaValue;
     d[i + 3] = 255;
+
+    if (alphaValue < 250) hasContent = true;
   }
 
-  ctx.putImageData(img, 0, 0);
-  return canvas;
+  ctx.putImageData(imgData, 0, 0);
+  return hasContent ? canvas : null;
 }
 
 function CardModel({ cardData, autoRotate = false, showEffects = true }) {
@@ -125,53 +106,115 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     return {
       width: (dims.width || 89) / 1000,
       height: (dims.height || 51) / 1000,
-      thickness: Math.max(0.00035, (dims.thickness || 0.35) / 1000), // ≥0.2mm
+      thickness: Math.max(0.00035, (dims.thickness || 0.35) / 1000),
     };
   }, [cardData]);
 
-  // NEW: Extract structured card data from adapter output - FIXED
+  // Extract structured card data from adapter output - FIXED BUG
   const cardSides = useMemo(() => {
-    if (!cardData) {
+    if (!cardData)
       return { front: {}, back: {}, frontLayers: [], backLayers: [] };
-    }
 
-    // 1) Existing adapter shape (single per side)
     const cards = cardData?.cards || {};
     const front = cards.front || {};
     const back = cards.back || {};
-
-    // 2) ParseResult arrays (multi-layer per side)
     const pr = cardData?.parseResult || {};
     const fc = Array.isArray(pr.front_cards) ? pr.front_cards : [];
     const bc = Array.isArray(pr.back_cards) ? pr.back_cards : [];
 
-    // Normalize each layer record into { albedoUrl, dieCutUrl, foilLayers, uvLayers, embossLayers }
-    const normLayer = (rec) => ({
-      albedoUrl: rec?.albedo || rec?.print || null,
-      // prefer diecut mask png if present; svg is kept for ref but renderer needs a raster mask
-      dieCutUrl:
+    // FIXED: Proper layer normalization with maps object priority
+    const normLayer = (rec) => {
+      const maps = rec?.maps || {};
+
+      const albedoUrl =
+        maps.albedo_png ||
+        rec?.albedo ||
+        rec?.print ||
+        rec?.albedo_png ||
+        rec?.albedoUrl ||
+        rec?.image ||
+        rec?.albedo_path ||
+        null;
+
+      const dieCutUrl =
+        maps.diecut_mask ||
+        maps.diecut_png ||
         rec?.die_png ||
         rec?.die_mask ||
+        maps.diecut_svg ||
+        rec?.die_svg ||
         rec?.diecut_mask ||
         rec?.diecut_png ||
-        null,
-      foilLayers: rec?.foil
-        ? [{ colorUrl: rec.foil_color || null, maskUrl: rec.foil || null }]
-        : [],
-      uvLayers: rec?.uv ? [{ maskUrl: rec.uv }] : [],
-      embossLayers: rec?.emboss
-        ? [{ maskUrl: rec.emboss, type: "emboss" }]
-        : [],
-    });
+        rec?.diecut_svg ||
+        rec?.die ||
+        rec?.diecut ||
+        null;
+
+      // CRITICAL DEBUG: Log ALL available die-cut options
+      console.log("=== DIE-CUT DEBUG ===", {
+        mapsKeys: maps ? Object.keys(maps) : [],
+        mapsDiecutMask: maps.diecut_mask,
+        mapsDiecutPng: maps.diecut_png,
+        mapsDiecutSvg: maps.diecut_svg,
+        recDiePng: rec?.die_png,
+        recDieMask: rec?.die_mask,
+        recDieSvg: rec?.die_svg,
+        finalDieCutUrl: dieCutUrl,
+        hasMaps: !!rec?.maps,
+        recKeys: rec ? Object.keys(rec) : [],
+      });
+
+      const foilMask = maps.foil || rec?.foil || rec?.foil_mask || null;
+      const foilColor =
+        maps.foil_color || rec?.foil_color || rec?.foilColour || null;
+      const uvMask =
+        maps.uv ||
+        maps.spot_uv ||
+        rec?.uv ||
+        rec?.spot_uv ||
+        rec?.spotuv ||
+        rec?.uv_mask ||
+        null;
+      const emboss =
+        maps.emboss || maps.deboss || rec?.emboss || rec?.deboss || null;
+
+      return {
+        albedoUrl,
+        dieCutUrl,
+        foilLayers:
+          foilMask || foilColor
+            ? [{ colorUrl: foilColor, maskUrl: foilMask }]
+            : [],
+        uvLayers: uvMask ? [{ maskUrl: uvMask }] : [],
+        embossLayers: emboss
+          ? [{ maskUrl: emboss, type: rec?.deboss ? "deboss" : "emboss" }]
+          : [],
+      };
+    };
 
     const frontLayers = fc.map(normLayer);
     const backLayers = bc.map(normLayer);
 
     return {
-      // single-side convenience (keeps Case A path intact)
       front: {
-        albedoUrl: front.albedoUrl || front.albedo || front.print || null,
-        dieCutUrl: front.dieCutUrl || front.die_png || front.die_mask || null,
+        albedoUrl:
+          front.maps?.albedo_png ||
+          front.albedoUrl ||
+          front.albedo ||
+          front.print ||
+          null,
+        dieCutUrl:
+          front.maps?.diecut_mask ||
+          front.maps?.diecut_png ||
+          front.dieCutUrl ||
+          front.die_png ||
+          front.die_mask ||
+          front.maps?.diecut_svg ||
+          front.die_svg ||
+          front.diecut_mask ||
+          front.diecut_png ||
+          front.diecut_svg ||
+          null,
         foilLayers: Array.isArray(front.foilLayers) ? front.foilLayers : [],
         uvLayers: Array.isArray(front.uvLayers) ? front.uvLayers : [],
         embossLayers: Array.isArray(front.embossLayers)
@@ -179,19 +222,34 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
           : [],
       },
       back: {
-        albedoUrl: back.albedoUrl || back.albedo || back.print || null,
-        dieCutUrl: back.dieCutUrl || back.die_png || back.die_mask || null,
+        albedoUrl:
+          back.maps?.albedo_png ||
+          back.albedoUrl ||
+          back.albedo ||
+          back.print ||
+          null,
+        dieCutUrl:
+          back.maps?.diecut_mask ||
+          back.maps?.diecut_png ||
+          back.dieCutUrl ||
+          back.die_png ||
+          back.die_mask ||
+          back.maps?.diecut_svg ||
+          back.die_svg ||
+          back.diecut_mask ||
+          back.diecut_png ||
+          back.diecut_svg ||
+          null,
         foilLayers: Array.isArray(back.foilLayers) ? back.foilLayers : [],
         uvLayers: Array.isArray(back.uvLayers) ? back.uvLayers : [],
         embossLayers: Array.isArray(back.embossLayers) ? back.embossLayers : [],
       },
-      // multi-layer arrays used in Case B
       frontLayers,
       backLayers,
     };
   }, [cardData]);
 
-  // NEW: Texture loading system for per-image overlays - FIXED
+  // Texture loading system
   const [textures, setTextures] = useState({
     front: {
       albedo: null,
@@ -207,13 +265,29 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       uvLayers: [],
       embossLayers: [],
     },
+    frontLayers: [],
+    backLayers: [],
   });
   const [loadingProgress, setLoadingProgress] = useState(0);
 
+  // Debug texture status
+  useEffect(() => {
+    console.log("=== TEXTURE LOADING STATUS ===", {
+      frontDieCut: textures.front?.dieCut,
+      frontLayersDieCut: textures.frontLayers?.[0]?.dieCut,
+      frontLayersCount: textures.frontLayers?.length,
+      allFrontLayers: textures.frontLayers?.map((layer, idx) => ({
+        layer: idx,
+        hasAlbedo: !!layer?.albedo?.image,
+        hasDieCut: !!layer?.dieCut,
+        dieCutType: layer?.dieCut?.image ? "loaded" : "missing",
+      })),
+    });
+  }, [textures]);
+
+  // Texture loading effect
   useEffect(() => {
     let cancelled = false;
-
-    // Early return if no jobId
     if (!jobId) {
       setTextures({
         front: {
@@ -230,6 +304,8 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
           uvLayers: [],
           embossLayers: [],
         },
+        frontLayers: [],
+        backLayers: [],
       });
       return;
     }
@@ -238,12 +314,11 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     loader.setCrossOrigin("anonymous");
 
     const normalizeRel = (jid, relPath) => {
-      if (typeof relPath !== "string") return null;
-      if (relPath.startsWith("assets/")) {
-        const re = new RegExp(`^assets\\/${jid}\\/`);
-        return relPath.replace(re, "").replace(/^assets\/[^/]+\//, "");
-      }
-      return relPath;
+      if (typeof relPath !== "string" || !relPath) return null;
+      let p = relPath.replace(/^[\/\s]+/, "");
+      p = p.replace(/^assets\/[^/]+\//, "");
+      p = p.replace(/^jobs\/[^/]+\/assets\//, "");
+      return p;
     };
 
     const loadTexture = (jid, relPath, isBack = false) => {
@@ -256,41 +331,85 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         const rel = normalizeRel(jid, relPath);
         const url = getAssetUrl(jid, rel);
 
-        loader.load(
-          url,
-          (tex) => {
-            if (cancelled || !tex) {
+        console.log(`Loading texture: ${url} from original path: ${relPath}`);
+
+        // Handle SVG files by converting them to PNG canvas
+        if (relPath.toLowerCase().endsWith(".svg")) {
+          console.log("Processing SVG die-cut file:", url);
+
+          // Create a temporary image to load SVG
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            if (cancelled) {
               resolve(null);
               return;
             }
 
-            tex.flipY = true; // This is correct for Three.js coordinate system
+            // Convert SVG to PNG canvas
+            const canvas = document.createElement("canvas");
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext("2d");
+
+            // Draw SVG to canvas
+            ctx.drawImage(img, 0, 0, img.width, img.height);
+
+            // Create texture from canvas
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.flipY = true;
             tex.colorSpace = THREE.SRGBColorSpace;
 
-            // FIXED: Apply proper mirroring for back side (X flip only, not Y)
             if (isBack) {
               tex.wrapS = THREE.RepeatWrapping;
-              tex.repeat.x = -1; // Mirror horizontally (X-axis)
-              tex.offset.x = 1; // Adjust offset for proper positioning
-              // DO NOT flip Y again - tex.flipY=true is sufficient
+              tex.repeat.x = -1;
+              tex.offset.x = 1;
             }
 
             tex.needsUpdate = true;
+            console.log("Successfully converted SVG to texture");
             resolve(tex);
-          },
-          undefined,
-          () => resolve(null)
-        );
+          };
+
+          img.onerror = () => {
+            console.warn("Failed to load SVG image:", url);
+            resolve(null);
+          };
+
+          img.src = url;
+        } else {
+          // Normal texture loading for PNG/JPG
+          loader.load(
+            url,
+            (tex) => {
+              if (cancelled || !tex) {
+                resolve(null);
+                return;
+              }
+              tex.flipY = true;
+              tex.colorSpace = THREE.SRGBColorSpace;
+
+              if (isBack) {
+                tex.wrapS = THREE.RepeatWrapping;
+                tex.repeat.x = -1;
+                tex.offset.x = 1;
+              }
+
+              tex.needsUpdate = true;
+              resolve(tex);
+            },
+            undefined,
+            () => resolve(null)
+          );
+        }
       });
     };
 
     const createMaskTexture = (colorTex) => {
       if (!colorTex || !colorTex.image) return colorTex?.clone() || null;
-
       try {
         const maskCanvas = toBinaryMaskCanvas(colorTex.image);
         if (!maskCanvas) return colorTex.clone();
-
         const maskTex = new THREE.CanvasTexture(maskCanvas);
         maskTex.flipY = true;
         maskTex.colorSpace = THREE.NoColorSpace;
@@ -301,46 +420,34 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       }
     };
 
-    const loadSideTextures = async (sideData, isBack = false) => {
-      // Load one physical layer (albedo + die + effects) → textures for that layer
-      const loadLayerTextures = async (layerData, isBack = false) => {
-        const layerTextures = {
-          albedo: null,
-          dieCut: null,
-          foilLayers: [],
-          uvLayers: [],
-          embossLayers: [],
-        };
+    const loadLayerTextures = async (layerData, isBack = false) => {
+      const layerTextures = {
+        albedo: null,
+        dieCut: null,
+        foilLayers: [],
+        uvLayers: [],
+        embossLayers: [],
+      };
 
-        if (layerData?.albedoUrl) {
-          layerTextures.albedo = await loadTexture(
-            jobId,
-            layerData.albedoUrl,
-            isBack
+      // Load albedo
+      if (layerData?.albedoUrl) {
+        layerTextures.albedo = await loadTexture(
+          jobId,
+          layerData.albedoUrl,
+          isBack
+        );
+      }
+
+      // Load die-cut - CRITICAL: This is where PNG mask should load
+      if (layerData?.dieCutUrl) {
+        console.log(`Attempting to load die-cut: ${layerData.dieCutUrl}`);
+        const dieTex = await loadTexture(jobId, layerData.dieCutUrl, isBack);
+        if (dieTex?.image) {
+          console.log(
+            `Successfully loaded die-cut texture: ${layerData.dieCutUrl}`
           );
-        }
-
-        if (layerData?.dieCutUrl) {
-          const dieTex = await loadTexture(jobId, layerData.dieCutUrl, isBack);
-          if (dieTex?.image) {
-            const maskCanvas = toBinaryMaskCanvas(dieTex.image);
-            const ctx = maskCanvas.getContext("2d", {
-              willReadFrequently: true,
-            });
-            const img = ctx.getImageData(
-              0,
-              0,
-              maskCanvas.width,
-              maskCanvas.height
-            );
-            const d = img.data;
-            for (let i = 0; i < d.length; i += 4) {
-              const v = d[i];
-              const inv = 255 - v; // white cut → 0 alpha
-              d[i] = d[i + 1] = d[i + 2] = inv;
-              d[i + 3] = 255;
-            }
-            ctx.putImageData(img, 0, 0);
+          const maskCanvas = toBinaryMaskCanvas(dieTex.image);
+          if (maskCanvas) {
             const alphaTex = new THREE.CanvasTexture(maskCanvas);
             alphaTex.flipY = true;
             alphaTex.colorSpace = THREE.NoColorSpace;
@@ -351,71 +458,78 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             }
             alphaTex.needsUpdate = true;
             layerTextures.dieCut = alphaTex;
+            console.log("Die-cut mask texture created successfully");
+          } else {
+            console.warn("Failed to create die-cut mask canvas");
           }
+        } else {
+          console.warn(
+            `Failed to load die-cut texture from: ${layerData.dieCutUrl}`
+          );
         }
+      }
 
-        // Foil (color + mask if available)
-        for (const f of layerData?.foilLayers || []) {
-          let colorTex = null,
-            maskTex = null;
-          if (f.colorUrl) {
-            colorTex = await loadTexture(jobId, f.colorUrl, isBack);
-            if (colorTex) maskTex = createMaskTexture(colorTex);
-          }
-          if (!maskTex && f.maskUrl) {
-            const raw = await loadTexture(jobId, f.maskUrl, isBack);
-            if (raw) maskTex = createMaskTexture(raw);
-          }
-          if (isBack && maskTex) {
-            maskTex.wrapS = THREE.RepeatWrapping;
-            maskTex.repeat.x = -1;
-            maskTex.offset.x = 1;
-            maskTex.needsUpdate = true;
-          }
-          if (maskTex || colorTex)
-            layerTextures.foilLayers.push({ colorTex, maskTex });
+      // Load effects (foil, UV, emboss)
+      for (const f of layerData?.foilLayers || []) {
+        let colorTex = null,
+          maskTex = null;
+        if (f.colorUrl) {
+          colorTex = await loadTexture(jobId, f.colorUrl, isBack);
+          if (colorTex) maskTex = createMaskTexture(colorTex);
         }
+        if (!maskTex && f.maskUrl) {
+          const raw = await loadTexture(jobId, f.maskUrl, isBack);
+          if (raw) maskTex = createMaskTexture(raw);
+        }
+        if (isBack && maskTex) {
+          maskTex.wrapS = THREE.RepeatWrapping;
+          maskTex.repeat.x = -1;
+          maskTex.offset.x = 1;
+          maskTex.needsUpdate = true;
+        }
+        if (maskTex || colorTex)
+          layerTextures.foilLayers.push({ colorTex, maskTex });
+      }
 
-        // UV
-        for (const u of layerData?.uvLayers || []) {
-          if (u.maskUrl) {
-            const raw = await loadTexture(jobId, u.maskUrl, isBack);
-            if (raw) {
-              const maskTex = createMaskTexture(raw);
-              if (isBack && maskTex) {
-                maskTex.wrapS = THREE.RepeatWrapping;
-                maskTex.repeat.x = -1;
-                maskTex.offset.x = 1;
-                maskTex.needsUpdate = true;
-              }
-              layerTextures.uvLayers.push({ maskTex });
+      for (const u of layerData?.uvLayers || []) {
+        if (u.maskUrl) {
+          const raw = await loadTexture(jobId, u.maskUrl, isBack);
+          if (raw) {
+            const maskTex = createMaskTexture(raw);
+            if (isBack && maskTex) {
+              maskTex.wrapS = THREE.RepeatWrapping;
+              maskTex.repeat.x = -1;
+              maskTex.offset.x = 1;
+              maskTex.needsUpdate = true;
             }
+            layerTextures.uvLayers.push({ maskTex });
           }
         }
+      }
 
-        // Emboss
-        for (const e of layerData?.embossLayers || []) {
-          if (e.maskUrl) {
-            const raw = await loadTexture(jobId, e.maskUrl, isBack);
-            if (raw) {
-              const maskTex = createMaskTexture(raw);
-              if (isBack && maskTex) {
-                maskTex.wrapS = THREE.RepeatWrapping;
-                maskTex.repeat.x = -1;
-                maskTex.offset.x = 1;
-                maskTex.needsUpdate = true;
-              }
-              layerTextures.embossLayers.push({
-                maskTex,
-                type: e.type || "emboss",
-              });
+      for (const e of layerData?.embossLayers || []) {
+        if (e.maskUrl) {
+          const raw = await loadTexture(jobId, e.maskUrl, isBack);
+          if (raw) {
+            const maskTex = createMaskTexture(raw);
+            if (isBack && maskTex) {
+              maskTex.wrapS = THREE.RepeatWrapping;
+              maskTex.repeat.x = -1;
+              maskTex.offset.x = 1;
+              maskTex.needsUpdate = true;
             }
+            layerTextures.embossLayers.push({
+              maskTex,
+              type: e.type || "emboss",
+            });
           }
         }
+      }
 
-        return layerTextures;
-      };
+      return layerTextures;
+    };
 
+    const loadSideTextures = async (sideData, isBack = false) => {
       const sideTextures = {
         albedo: null,
         dieCut: null,
@@ -424,7 +538,6 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         embossLayers: [],
       };
 
-      // Load albedo
       if (sideData.albedoUrl) {
         sideTextures.albedo = await loadTexture(
           jobId,
@@ -433,76 +546,47 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         );
       }
 
-      // Load die-cut
       if (sideData.dieCutUrl) {
         const dieTex = await loadTexture(jobId, sideData.dieCutUrl, isBack);
-        if (dieTex && dieTex.image) {
-          // 1) build binary mask from the die PNG
+        if (dieTex?.image) {
           const maskCanvas = toBinaryMaskCanvas(dieTex.image);
-          // 2) invert: white (cut line) -> 0 (transparent), black (keep) -> 255 (opaque)
-          const ctx = maskCanvas.getContext("2d", { willReadFrequently: true });
-          const img = ctx.getImageData(
-            0,
-            0,
-            maskCanvas.width,
-            maskCanvas.height
-          );
-          const d = img.data;
-          for (let i = 0; i < d.length; i += 4) {
-            const v = d[i]; // grayscale (0..255)
-            const inv = 255 - v; // invert
-            d[i] = d[i + 1] = d[i + 2] = inv;
-            d[i + 3] = 255;
+          if (maskCanvas) {
+            const alphaTex = new THREE.CanvasTexture(maskCanvas);
+            alphaTex.flipY = true;
+            alphaTex.colorSpace = THREE.NoColorSpace;
+            if (isBack) {
+              alphaTex.wrapS = THREE.RepeatWrapping;
+              alphaTex.repeat.x = -1;
+              alphaTex.offset.x = 1;
+            }
+            alphaTex.needsUpdate = true;
+            sideTextures.dieCut = alphaTex;
           }
-          ctx.putImageData(img, 0, 0);
-          const alphaTex = new THREE.CanvasTexture(maskCanvas);
-          alphaTex.flipY = true;
-          alphaTex.colorSpace = THREE.NoColorSpace;
-          if (isBack) {
-            alphaTex.wrapS = THREE.RepeatWrapping;
-            alphaTex.repeat.x = -1;
-            alphaTex.offset.x = 1;
-          }
-          alphaTex.needsUpdate = true;
-          sideTextures.dieCut = alphaTex; // store the **inverted** alpha
-        } else {
-          sideTextures.dieCut = null;
         }
       }
 
-      // Load foil layers (color + mask)
+      // Load side-level effects
       for (const foilLayer of sideData.foilLayers) {
         let colorTex = null,
           maskTex = null;
-
         if (foilLayer?.colorUrl) {
           colorTex = await loadTexture(jobId, foilLayer.colorUrl, isBack);
-          if (colorTex) {
-            maskTex = createMaskTexture(colorTex);
-          }
+          if (colorTex) maskTex = createMaskTexture(colorTex);
         }
-
-        // If parser provided a mask file explicitly, load it too
         if (!maskTex && foilLayer?.maskUrl) {
           const rawMask = await loadTexture(jobId, foilLayer.maskUrl, isBack);
           if (rawMask) maskTex = createMaskTexture(rawMask);
         }
-
-        // Mirror mask if needed
         if (isBack && maskTex) {
           maskTex.wrapS = THREE.RepeatWrapping;
           maskTex.repeat.x = -1;
           maskTex.offset.x = 1;
           maskTex.needsUpdate = true;
         }
-
-        // Push if we have at least a mask (metal highlight can render)
-        if (maskTex || colorTex) {
+        if (maskTex || colorTex)
           sideTextures.foilLayers.push({ colorTex, maskTex });
-        }
       }
 
-      // Load UV layers (mask only)
       for (const uvLayer of sideData.uvLayers) {
         if (uvLayer?.maskUrl) {
           const colorTex = await loadTexture(jobId, uvLayer.maskUrl, isBack);
@@ -519,7 +603,6 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         }
       }
 
-      // Load emboss layers (mask only)
       for (const embossLayer of sideData.embossLayers) {
         if (embossLayer?.maskUrl) {
           const colorTex = await loadTexture(
@@ -548,11 +631,10 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
 
     const run = async () => {
       setLoadingProgress(0);
-
       try {
         const [frontTextures, backTextures, frontLayerTex, backLayerTex] =
           await Promise.all([
-            loadSideTextures(cardSides.front, false), // Case A single
+            loadSideTextures(cardSides.front, false),
             loadSideTextures(cardSides.back, true),
             Promise.all(
               (cardSides.frontLayers || []).map((L) =>
@@ -566,21 +648,15 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             ),
           ]);
 
-        setTextures({
-          front: frontTextures,
-          back: backTextures,
-          frontLayers: frontLayerTex,
-          backLayers: backLayerTex,
-        });
-
-        setLoadingProgress(1);
-
-        // if (!cancelled) {
-        //   setTextures({
-        //     front: frontTextures,
-        //     back: backTextures,
-        //   });
-        // }
+        if (!cancelled) {
+          setTextures({
+            front: frontTextures,
+            back: backTextures,
+            frontLayers: frontLayerTex,
+            backLayers: backLayerTex,
+          });
+          setLoadingProgress(1);
+        }
       } catch (error) {
         console.error("Error loading textures:", error);
         if (!cancelled) {
@@ -599,49 +675,49 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               uvLayers: [],
               embossLayers: [],
             },
+            frontLayers: [],
+            backLayers: [],
           });
         }
       }
     };
 
     run();
-
     return () => {
       cancelled = true;
     };
   }, [jobId, cardSides]);
 
-  // Check if die-cut masks are usable - FIXED
+  // Memoized computed values
   const alphaFront = useMemo(() => {
-    const l0 =
-      textures.frontLayers &&
-      textures.frontLayers[0] &&
-      textures.frontLayers[0].dieCut;
+    const l0 = textures.frontLayers?.[0]?.dieCut;
     return l0 || textures.front?.dieCut || null;
   }, [textures.frontLayers, textures.front?.dieCut]);
+
   const alphaBack = useMemo(
     () => textures.back?.dieCut || null,
     [textures.back?.dieCut]
   );
 
-  // Extract layer data for fallback rendering - FIXED
-  const { layers, cardsDetected, activeCard } = useMemo(() => {
-    if (!cardData) {
-      return { layers: {}, cardsDetected: 0, activeCard: "front" };
-    }
+  const hasFrontLayerAlbedo = useMemo(() => {
+    return (
+      Array.isArray(textures.frontLayers) &&
+      textures.frontLayers.some((L) => L?.albedo?.image)
+    );
+  }, [textures.frontLayers]);
 
+  const { layers, cardsDetected, activeCard } = useMemo(() => {
+    if (!cardData) return { layers: {}, cardsDetected: 0, activeCard: "front" };
     const cards = cardData?.items || cardData?.layers || {};
     const cardKeys = Object.keys(cards).filter(
       (key) => key === "front" || key === "back"
     );
     let activeCardData = cards.front || cards.back || {};
     let activeCardKey = "front";
-
     if (cardKeys.length > 0) {
       activeCardKey = cardKeys.includes("front") ? "front" : cardKeys[0];
       activeCardData = cards[activeCardKey] || {};
     }
-
     return {
       layers: activeCardData,
       cardsDetected: cardKeys.length,
@@ -649,20 +725,28 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     };
   }, [cardData]);
 
-  // Check if we should use new texture system or fallback to items - FIXED
   const hasTextureData = useMemo(() => {
+    const frontLayerAny =
+      Array.isArray(textures.frontLayers) &&
+      textures.frontLayers.some((L) => L?.albedo?.image);
+    const backLayerAny =
+      Array.isArray(textures.backLayers) &&
+      textures.backLayers.some((L) => L?.albedo?.image);
     return (
-      textures.front?.albedo ||
-      textures.back?.albedo ||
+      frontLayerAny ||
+      backLayerAny ||
+      !!textures.front?.albedo?.image ||
+      !!textures.back?.albedo?.image ||
       (textures.front?.foilLayers?.length || 0) > 0 ||
-      (textures.back?.foilLayers?.length || 0) > 0
+      (textures.back?.foilLayers?.length || 0) > 0 ||
+      (textures.front?.uvLayers?.length || 0) > 0 ||
+      (textures.back?.uvLayers?.length || 0) > 0
     );
   }, [textures]);
 
   const hasDie = !!alphaFront || !!alphaBack;
   const hasUsableAlbedo = !!textures.front?.albedo || !!textures.back?.albedo;
   const hideBase = false;
-  // const hideBase = hasDie && hasUsableAlbedo;
 
   // Auto rotation
   useFrame((state, delta) => {
@@ -671,7 +755,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     }
   });
 
-  // NEW: Render overlay planes with proper z-ordering - FIXED
+  // Render overlay planes with proper z-ordering
   const renderOverlayPlane = (
     side,
     textureInfo,
@@ -683,9 +767,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     const positionZ = isBack
       ? -cardDimensions.thickness / 2 - zOffset
       : cardDimensions.thickness / 2 + zOffset;
-
     const rotation = isBack ? [0, Math.PI, 0] : [0, 0, 0];
-
     const isInk = materialProps && materialProps.__ink === true;
     const common = {
       transparent: true,
@@ -712,18 +794,17 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
     );
   };
 
-  // NEW: Render effect stacks per side - FIXED
+  // Render effect stacks per side
   const renderEffectStacks = () => {
     const stacks = [];
-    let renderOrder = 10; // Start after albedo
+    let renderOrder = 10;
 
-    // Render front side effects
     ["front", "back"].forEach((side) => {
       const isBack = side === "back";
       const sideTextures = textures[side] || {};
-      const sideOffset = isBack ? 0.0001 : 0; // Small offset to avoid z-fighting
+      const sideOffset = isBack ? 0.0001 : 0;
 
-      // UV Layers (clear gloss)
+      // UV Layers
       (sideTextures.uvLayers || []).forEach((uvLayer, index) => {
         if (uvLayer?.maskTex) {
           stacks.push(
@@ -747,7 +828,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
         }
       });
 
-      // Foil Layers - Ink (unlit colors) - FIXED VERSION
+      // Foil Layers - Ink
       (sideTextures.foilLayers || []).forEach((foilLayer, index) => {
         if (foilLayer?.colorTex && foilLayer?.maskTex) {
           stacks.push(
@@ -758,24 +839,17 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               renderOrder++,
               {
                 __ink: true,
-                map: foilLayer.colorTex, // Use the original color texture
+                map: foilLayer.colorTex,
                 alphaMap: foilLayer.maskTex,
                 alphaTest: 0.1,
-                toneMapped: false, // Preserve exact colors
-                // REMOVE these physical material properties for basic material:
-                // metalness: 1.0,    // ← Remove
-                // roughness: 0.12,   // ← Remove
-                // color: new THREE.Color(0xffffff), // ← Remove (let the texture determine color)
-                // envMapIntensity: 1.8, // ← Remove
-                // opacity: 0.35,     // ← Remove
-                // blending: THREE.AdditiveBlending // ← Remove or change to NormalBlending
+                toneMapped: false,
               }
             )
           );
         }
       });
 
-      // Foil Layers - Metal (reflective highlights) - FIXED VERSION
+      // Foil Layers - Metal
       (sideTextures.foilLayers || []).forEach((foilLayer, index) => {
         if (foilLayer?.maskTex) {
           stacks.push(
@@ -787,11 +861,11 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               {
                 alphaMap: foilLayer.maskTex,
                 alphaTest: 0.1,
-                metalness: 0.9, // Slightly reduced for better color reflection
-                roughness: 0.15, // Slightly increased for more natural look
-                color: new THREE.Color(0xffffff), // White base to reflect environment
-                envMapIntensity: 1.2, // Reduced to let ink colors show through
-                opacity: 0.6, // Increased opacity for stronger effect
+                metalness: 0.9,
+                roughness: 0.15,
+                color: new THREE.Color(0xffffff),
+                envMapIntensity: 1.2,
+                opacity: 0.6,
                 blending: THREE.AdditiveBlending,
               }
             )
@@ -837,34 +911,15 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       {!hideBase && <BaseCard dimensions={cardDimensions} />}
 
       {/* Albedo Planes */}
-      {(!textures.frontLayers || textures.frontLayers.length === 0) &&
-        textures.front?.albedo && (
-          <Plane
-            args={[cardDimensions.width, cardDimensions.height]}
-            position={[0, 0, cardDimensions.thickness / 2 + 0.0001]}
-            renderOrder={5}
-          >
-            <meshBasicMaterial
-              map={textures.front.albedo}
-              alphaMap={alphaFront || undefined}
-              transparent={!!alphaFront}
-            />
-          </Plane>
-        )}
-
-      {/* Multi-layer FRONT albedos (Case B). Layer 0 uses its dieCut; deeper layers drawn behind it */}
+      {/* Multi-layer FRONT albedos */}
       {Array.isArray(textures.frontLayers) &&
-        textures.frontLayers.length > 0 && (
+        textures.frontLayers.length > 0 &&
+        hasFrontLayerAlbedo && (
           <>
             {textures.frontLayers.map((L, i) => {
-              if (!L?.albedo) return null;
-              const z = cardDimensions.thickness / 2 - i * 0.00005 + 0.0001; // tiny step into the card
-              const matProps = {
-                map: L.albedo,
-                transparent: !!L.dieCut,
-                alphaMap: L.dieCut || undefined,
-                toneMapped: false,
-              };
+              if (!L?.albedo?.image) return null;
+              const z = cardDimensions.thickness / 2 - i * 0.00005 + 0.0001;
+              const hasDieCut = !!L.dieCut;
               return (
                 <Plane
                   key={`front-layer-${i}`}
@@ -872,14 +927,23 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
                   position={[0, 0, z]}
                   renderOrder={5 + i}
                 >
-                  <meshBasicMaterial {...matProps} />
+                  <meshBasicMaterial
+                    map={L.albedo}
+                    transparent={hasDieCut}
+                    alphaMap={hasDieCut ? L.dieCut : undefined}
+                    alphaTest={hasDieCut ? 0.1 : 0.0}
+                    depthWrite={!hasDieCut}
+                    side={THREE.DoubleSide}
+                    toneMapped={false}
+                  />
                 </Plane>
               );
             })}
           </>
         )}
 
-      {textures.back?.albedo && (
+      {/* Back albedo */}
+      {textures.back?.albedo?.image && (
         <Plane
           args={[cardDimensions.width, cardDimensions.height]}
           position={[0, 0, -cardDimensions.thickness / 2 - 0.0001]}
@@ -889,13 +953,50 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
           <meshBasicMaterial
             map={textures.back.albedo}
             alphaMap={alphaBack || undefined}
-            transparent={!!alphaBack}
+            transparent={true}
+            alphaTest={0.1}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            toneMapped={false}
           />
         </Plane>
       )}
 
-      {/* NEW: Effect Overlay Stacks */}
+      {/* FALLBACK: single FRONT albedo */}
+      {(!Array.isArray(textures.frontLayers) ||
+        textures.frontLayers.length === 0 ||
+        !hasFrontLayerAlbedo) &&
+        textures.front?.albedo?.image && (
+          <Plane
+            args={[cardDimensions.width, cardDimensions.height]}
+            position={[0, 0, cardDimensions.thickness / 2 + 0.0001]}
+            renderOrder={5}
+          >
+            <meshBasicMaterial
+              map={textures.front.albedo}
+              alphaMap={alphaFront || undefined}
+              transparent={!!alphaFront}
+              alphaTest={alphaFront ? 0.1 : 0.0}
+              depthWrite={!alphaFront}
+              side={THREE.DoubleSide}
+              toneMapped={false}
+            />
+          </Plane>
+        )}
+
+      {/* Effect Overlay Stacks */}
       {hasTextureData && renderEffectStacks()}
+
+      {import.meta.env.DEV && (
+        <Text
+          position={[0, cardDimensions.height / 2 + 0.01, 0]}
+          fontSize={0.005}
+          color="#ff0000"
+          anchorX="center"
+        >
+          {`DieCut: ${alphaFront ? "LOADED" : "MISSING"}`}
+        </Text>
+      )}
 
       {/* Fallback: Item-based rendering */}
       {!hasTextureData && showEffects && (
@@ -957,6 +1058,44 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       )}
 
       {/* Debug Info */}
+      {import.meta.env.DEV && alphaFront && (
+        <>
+          <Plane
+            args={[cardDimensions.width, cardDimensions.height]}
+            position={[0, 0.02, cardDimensions.thickness / 2 + 0.001]}
+            renderOrder={100}
+          >
+            <meshBasicMaterial
+              map={alphaFront}
+              transparent={false}
+              side={THREE.DoubleSide}
+            />
+          </Plane>
+          <Text
+            position={[0, 0.03, cardDimensions.thickness / 2 + 0.001]}
+            fontSize={0.003}
+            color="#ff0000"
+            anchorX="center"
+          >
+            DEBUG: Die-cut Mask
+          </Text>
+        </>
+      )}
+
+      {import.meta.env.DEV && alphaBack && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, -cardDimensions.thickness / 2 - 0.001]}
+          rotation={[0, Math.PI, 0]}
+          renderOrder={100}
+        >
+          <meshBasicMaterial
+            map={alphaBack}
+            transparent={false}
+            side={THREE.DoubleSide}
+          />
+        </Plane>
+      )}
       {import.meta.env.DEV && (
         <Text
           position={[0, -cardDimensions.height / 2 - 0.02, 0]}
@@ -979,14 +1118,12 @@ function CardModelPlaceholder({
   cardDimensions = { width: 0.089, height: 0.051, thickness: 0.00035 },
 }) {
   const meshRef = useRef();
-
   useFrame((state) => {
     if (meshRef.current && meshRef.current.material) {
       meshRef.current.material.opacity =
         0.5 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
     }
   });
-
   return (
     <group>
       <BaseCard dimensions={cardDimensions} />
