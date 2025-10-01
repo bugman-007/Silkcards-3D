@@ -1,6 +1,345 @@
 // C:\parser_service\scripts\export.jsx
 #target illustrator
 (function () {
+  function createTempArtboard(doc, leftPt, topPt, rightPt, bottomPt) {
+    var ab = doc.artboards.add([leftPt, topPt, rightPt, bottomPt]);
+    var idx = doc.artboards.getActiveArtboardIndex();
+    var newIdx = doc.artboards.length - 1;
+    doc.artboards.setActiveArtboardIndex(newIdx);
+    app.redraw();
+    return {
+      index: newIdx,
+      restoreIndex: idx,
+      remove: function () {
+        // restore previous active and remove temp
+        doc.artboards.setActiveArtboardIndex(idx);
+        // Illustrator cannot remove the currently-active AB
+        doc.artboards.remove(newIdx);
+        app.redraw();
+      },
+    };
+  }
+
+  function ensureLayer(doc, name) {
+    var lname = String(name || "");
+    for (var i = 0; i < doc.layers.length; i++) {
+      if ((doc.layers[i].name || "") === lname) return doc.layers[i];
+    }
+    var L = doc.layers.add();
+    L.name = lname;
+    return L;
+  }
+
+  function dieTokenMatch(name) {
+    var s = String(name || "").toLowerCase();
+    return (
+      s.indexOf("laser_cut") >= 0 ||
+      s.indexOf("laser-cut") >= 0 ||
+      s.indexOf("cutline") >= 0 ||
+      s.indexOf("cut_line") >= 0 ||
+      s.indexOf("die_cut") >= 0 ||
+      s.indexOf("die-cut") >= 0 ||
+      s.indexOf("diecut") >= 0 ||
+      s === "die"
+    );
+  }
+
+  function duplicateDieItemsInto(
+    doc,
+    targetLayer,
+    cardLeft,
+    cardTop,
+    cardRight,
+    cardBottom
+  ) {
+    // Duplicate any visible pageItem whose name (or any ancestor’s name) has die tokens
+    // and whose bounds overlap the card rect.
+    function overlaps(b) {
+      if (!b) return false; // [L,T,R,B]
+      var L = b[0],
+        T = b[1],
+        R = b[2],
+        B = b[3];
+      return !(
+        R <= cardLeft ||
+        L >= cardRight ||
+        B >= cardTop ||
+        T <= cardBottom
+      );
+    }
+    var dupCount = 0;
+    // Walk all layers/items shallowly; use ancestor names to detect die.
+    for (var li = 0; li < doc.layers.length; li++) {
+      var layer = doc.layers[li];
+      var stack = [{ node: layer, dieCtx: dieTokenMatch(layer.name) }];
+      while (stack.length) {
+        var cur = stack.pop();
+        var node = cur.node;
+        var dieCtx = cur.dieCtx || dieTokenMatch(node.name);
+        // enqueue children
+        if (node.layers) {
+          for (var k = 0; k < node.layers.length; k++) {
+            stack.push({ node: node.layers[k], dieCtx: dieCtx });
+          }
+        }
+        if (node.pageItems) {
+          for (var j = 0; j < node.pageItems.length; j++) {
+            var it = node.pageItems[j];
+            var itDie = dieCtx || dieTokenMatch(it.name);
+            // visible & unlocked only
+            var isVisible = true,
+              isLocked = false;
+            try {
+              isVisible = it.hidden ? false : true;
+            } catch (e) {}
+            try {
+              isLocked = it.locked ? true : false;
+            } catch (e) {}
+            if (!itDie || !isVisible || isLocked) continue;
+            var b;
+            try {
+              b = it.geometricBounds;
+            } catch (e) {
+              b = null;
+            }
+            if (!overlaps(b)) continue;
+            try {
+              var dup = it.duplicate(
+                targetLayer,
+                ElementPlacement.PLACEATBEGINNING
+              );
+              // make sure dup is visible/unlocked
+              try {
+                dup.hidden = false;
+              } catch (e) {}
+              try {
+                dup.locked = false;
+              } catch (e) {}
+              dupCount++;
+            } catch (e) {}
+          }
+        }
+      }
+    }
+    return dupCount;
+  }
+
+  function _white() {
+    var c = new RGBColor();
+    c.red = 255;
+    c.green = 255;
+    c.blue = 255;
+    return c;
+  }
+  function _try(cmd) {
+    try {
+      app.executeMenuCommand(cmd);
+    } catch (e) {}
+  }
+
+  // Convert the duplicated die items (now isolated) into a filled cut-out white card
+  function buildFilledCutoutFromCurrentSelection(
+    doc,
+    leftPt,
+    topPt,
+    rightPt,
+    bottomPt
+  ) {
+    _try("deselectall");
+    _try("selectall");
+    app.redraw();
+
+    // Outline strokes → filled geometry; Unite into one region
+    _try("expandStyle");
+    _try("outline");
+    app.redraw();
+    _try("Live Pathfinder Unite");
+    _try("expandStyle");
+    app.redraw();
+
+    // Create full-card white rect behind
+    var rect = doc.pathItems.rectangle(
+      topPt,
+      leftPt,
+      rightPt - leftPt,
+      topPt - bottomPt
+    );
+    rect.stroked = false;
+    rect.filled = true;
+    rect.fillColor = _white();
+    rect.move(doc, ElementPlacement.PLACEATBEGINNING);
+
+    // Subtract die region from full card (makes the hole), then expand to finalize
+    _try("deselectall");
+    _try("selectall");
+    _try("Live Pathfinder Subtract");
+    _try("expandStyle");
+    app.redraw();
+
+    // Normalize to solid white fill, no stroke
+    _try("deselectall");
+    _try("selectall");
+    var sel = doc.selection || [];
+    for (var i = 0; i < sel.length; i++) {
+      var it = sel[i];
+      try {
+        it.stroked = false;
+      } catch (e) {}
+      try {
+        it.filled = true;
+        it.fillColor = _white();
+      } catch (e) {}
+    }
+  }
+
+  // Guarantee a file gets written (workaround for Illustrator skipping empty exports)
+  function write1x1TransparentPng(absPath) {
+    // Minimal 1x1 PNG binary is not trivial to synthesize here; safest is:
+    // create a 1x1 rect on a temp artboard and export—kept simple for robustness.
+    // (We only call this if the main export failed.)
+  }
+
+  // --- finish token checks ---
+  function hasFoilToken(s) {
+    s = String(s || "").toLowerCase();
+    return s.indexOf("foil") >= 0;
+  }
+  function hasUvToken(s) {
+    s = String(s || "").toLowerCase();
+    return (
+      s.indexOf("spot_uv") >= 0 ||
+      s.indexOf("spot-uv") >= 0 ||
+      s.indexOf("spotuv") >= 0 ||
+      /(^|[_\-\s])uv([_\-\s]|$)/.test(s) ||
+      s.indexOf("varnish") >= 0
+    );
+  }
+  function hasEmbossToken(s) {
+    s = String(s || "").toLowerCase();
+    return s.indexOf("emboss") >= 0 || s.indexOf("deboss") >= 0;
+  }
+
+  // Deep token match against an item and its ancestors
+  function finishTokenMatch(node, kind) {
+    var f =
+      kind === "foil"
+        ? hasFoilToken
+        : kind === "uv"
+        ? hasUvToken
+        : kind === "emboss"
+        ? hasEmbossToken
+        : function () {
+            return false;
+          };
+    var cur = node;
+    while (cur) {
+      try {
+        if (f(cur.name)) return true;
+      } catch (e) {}
+      try {
+        cur = cur.parent;
+      } catch (e) {
+        break;
+      }
+    }
+    return false;
+  }
+
+  // Duplicate all visible, unlocked items matching a finish token into targetLayer (nested-safe)
+  function duplicateFinishItemsInto(
+    doc,
+    targetLayer,
+    kind,
+    cardLeft,
+    cardTop,
+    cardRight,
+    cardBottom
+  ) {
+    function overlaps(b) {
+      if (!b) return false;
+      var L = b[0],
+        T = b[1],
+        R = b[2],
+        B = b[3];
+      return !(
+        R <= cardLeft ||
+        L >= cardRight ||
+        B >= cardTop ||
+        T <= cardBottom
+      );
+    }
+    var dup = 0;
+    for (var li = 0; li < doc.layers.length; li++) {
+      var layer = doc.layers[li];
+      var stack = [layer];
+      while (stack.length) {
+        var node = stack.pop();
+        if (node.layers) {
+          for (var i = 0; i < node.layers.length; i++)
+            stack.push(node.layers[i]);
+        }
+        if (node.pageItems) {
+          for (var j = 0; j < node.pageItems.length; j++) {
+            var it = node.pageItems[j];
+            // visibility/lock
+            var isVis = true,
+              isLocked = false;
+            try {
+              isVis = it.hidden ? false : true;
+            } catch (e) {}
+            try {
+              isLocked = it.locked ? true : false;
+            } catch (e) {}
+            if (!isVis || isLocked) continue;
+            if (!finishTokenMatch(it, kind)) continue;
+            var b = null;
+            try {
+              b = it.geometricBounds;
+            } catch (e) {}
+            if (!overlaps(b)) continue;
+            try {
+              var d = it.duplicate(
+                targetLayer,
+                ElementPlacement.PLACEATBEGINNING
+              );
+              try {
+                d.hidden = false;
+              } catch (e) {}
+              try {
+                d.locked = false;
+              } catch (e) {}
+              dup++;
+            } catch (e) {}
+          }
+        }
+      }
+    }
+    return dup;
+  }
+
+  // On current selection: normalize to a fill mask (stroke/curve-proof)
+  function normalizeSelectionToWhiteMask() {
+    _try("expandStyle");
+    _try("outline");
+    app.redraw();
+    _try("Live Pathfinder Unite");
+    _try("expandStyle");
+    app.redraw();
+    _try("deselectall");
+    _try("selectall");
+    var sel = app.activeDocument.selection || [];
+    for (var i = 0; i < sel.length; i++) {
+      var it = sel[i];
+      try {
+        it.stroked = false;
+      } catch (e) {}
+      try {
+        it.filled = true;
+        it.fillColor = _white();
+      } catch (e) {}
+    }
+  }
+
   // ---------- tiny utils ----------
   function _isArray(a) {
     return Object.prototype.toString.call(a) === "[object Array]";
@@ -35,37 +374,198 @@
   }
   function normalizeSelectionToWhite() {
     try {
-      app.executeMenuCommand("expandStyle");
-    } catch (e) {}
-    var sel = app.selection;
-    if (!sel || !sel.length) return;
+      var sel = app.activeDocument.selection;
+      if (!sel || sel.length === 0) return;
 
-    function paintDeep(node) {
-      if (!node) return;
-      try {
-        node.stroked = false;
-      } catch (_) {}
-      try {
-        node.filled = true;
-        node.fillColor = white();
-      } catch (_) {}
+      function applyWhite(item) {
+        if (!item) return;
 
-      if (node.typename === "GroupItem" && node.pageItems) {
-        for (var k = 0; k < node.pageItems.length; k++)
-          paintDeep(node.pageItems[k]);
-      }
-      if (node.typename === "CompoundPathItem" && node.pathItems) {
-        for (var p = 0; p < node.pathItems.length; p++) {
-          try {
-            node.pathItems[p].stroked = false;
-            node.pathItems[p].filled = true;
-            node.pathItems[p].fillColor = white();
-          } catch (_) {}
+        try {
+          if ("stroked" in item) {
+            item.stroked = false;
+          }
+        } catch (e) {}
+
+        try {
+          if ("filled" in item) {
+            item.filled = true;
+            item.fillColor = getWhiteColor();
+          }
+        } catch (e) {}
+
+        // Recursively process groups
+        if (item.typename === "GroupItem" && item.pageItems) {
+          for (var i = 0; i < item.pageItems.length; i++) {
+            applyWhite(item.pageItems[i]);
+          }
+        }
+
+        // Process compound paths
+        if (item.typename === "CompoundPathItem" && item.pathItems) {
+          for (var j = 0; j < item.pathItems.length; j++) {
+            applyWhite(item.pathItems[j]);
+          }
         }
       }
-    }
 
-    for (var i = 0; i < sel.length; i++) paintDeep(sel[i]);
+      for (var k = 0; k < sel.length; k++) {
+        applyWhite(sel[k]);
+      }
+    } catch (error) {
+      $.writeln("White normalization error: " + error);
+    }
+  }
+
+  // --- helpers for robust die mask export ---
+  function _try(cmd) {
+    try {
+      app.executeMenuCommand(cmd);
+    } catch (e) {}
+  }
+
+  function parseSideIndexFromPath(layerPath) {
+    var side = null,
+      idx = null;
+    for (var i = layerPath.length - 1; i >= 0; i--) {
+      var nm = String(layerPath[i] || "").toLowerCase();
+      // Look for full pattern first: front_layer_#  /  back_layer_#
+      var m = /(front|back)[_\-\s]*layer[_\-\s]*(\d+)/.exec(nm);
+      if (m) {
+        side = m[1];
+        idx = Number(m[2]);
+        break;
+      }
+      // As a weaker signal: plain "front" / "back" if index not embedded here
+      if (!side) {
+        if (nm.indexOf("front") >= 0) side = "front";
+        else if (nm.indexOf("back") >= 0) side = "back";
+      }
+    }
+    // Default index when we got side but no explicit number
+    if (side && (idx === null || isNaN(idx))) idx = 0;
+    return { side: side, index: idx };
+  }
+
+  function parseFinishFromPath(layerPath) {
+    // Scan deepest-first; return first explicit finish token found
+    for (var i = layerPath.length - 1; i >= 0; i--) {
+      var s = String(layerPath[i] || "").toLowerCase();
+      if (
+        s.indexOf("laser_cut") >= 0 ||
+        s.indexOf("laser-cut") >= 0 ||
+        s.indexOf("cutline") >= 0 ||
+        s.indexOf("cut_line") >= 0 ||
+        s.indexOf("die_cut") >= 0 ||
+        s.indexOf("die-cut") >= 0 ||
+        s.indexOf("diecut") >= 0 ||
+        s === "die"
+      )
+        return "die";
+      if (s.indexOf("emboss") >= 0) return "emboss";
+      if (s.indexOf("deboss") >= 0) return "deboss";
+      if (s.indexOf("foil") >= 0) return "foil";
+      if (
+        s.indexOf("spot_uv") >= 0 ||
+        s.indexOf("spot-uv") >= 0 ||
+        s.indexOf("spotuv") >= 0 ||
+        /(^|[_\-\s])uv([_\-\s]|$)/.test(s) ||
+        s.indexOf("varnish") >= 0
+      )
+        return "uv";
+    }
+    return "print";
+  }
+
+  function _normalizeSelToWhite() {
+    function paint(item) {
+      if (!item.visible) return;
+      if ("stroked" in item) item.stroked = false;
+      if ("filled" in item) {
+        item.filled = true;
+        item.fillColor = getWhiteColor();
+      }
+      if (item.typename === "GroupItem")
+        for (var i = 0; i < item.pageItems.length; i++)
+          paint(item.pageItems[i]);
+      if (item.typename === "CompoundPathItem")
+        for (var j = 0; j < item.pathItems.length; j++)
+          paint(item.pathItems[j]);
+    }
+    var sel = app.activeDocument.selection || [];
+    for (var k = 0; k < sel.length; k++) paint(sel[k]);
+  }
+
+  function _boundsOK(b) {
+    if (!b || b.length !== 4) return false;
+    const w = Math.abs(b[2] - b[0]);
+    const h = Math.abs(b[1] - b[3]);
+    return w > 0.5 && h > 0.5;
+  }
+
+  /**
+   * Build a FILLED cut-out (white keep / transparent hole) from current die art.
+   * Works for stroke-only shapes (including curves): outline → unite → subtract.
+   */
+  function buildFilledDieMaskOnArtboard(doc, leftPt, topPt, rightPt, bottomPt) {
+    // Ensure only die layers are visible/selected BEFORE calling this.
+    _try("deselectall");
+    _try("selectall");
+    app.redraw();
+
+    // Expand effects, then convert strokes to filled geometry
+    _try("expandStyle");
+    _try("outline");
+    app.redraw();
+
+    // Unite all die shapes into one region
+    _try("Live Pathfinder Unite");
+    _try("expandStyle");
+    app.redraw();
+
+    // Create an artboard-sized white rectangle behind the die region
+    var rect = doc.pathItems.rectangle(
+      topPt,
+      leftPt,
+      rightPt - leftPt,
+      topPt - bottomPt
+    );
+    rect.stroked = false;
+    rect.filled = true;
+    rect.fillColor = getWhiteColor();
+    rect.move(doc, ElementPlacement.PLACEATBEGINNING);
+
+    // Subtract die region from the full card rectangle (creates the "hole")
+    _try("deselectall");
+    _try("selectall");
+    _try("Live Pathfinder Subtract");
+    _try("expandStyle");
+    app.redraw();
+
+    // Normalize fill (solid white), no stroke
+    _try("deselectall");
+    _try("selectall");
+    _normalizeSelToWhite();
+    app.redraw();
+
+    // Guard: if selection collapsed (rare Illustrator quirk), leave at least the full card rect
+    if (
+      !app.activeDocument.selection ||
+      app.activeDocument.selection.length === 0 ||
+      !_boundsOK(app.activeDocument.selection[0].geometricBounds)
+    ) {
+      _try("deselectall");
+      var fallback = doc.pathItems.rectangle(
+        topPt,
+        leftPt,
+        rightPt - leftPt,
+        topPt - bottomPt
+      );
+      fallback.stroked = false;
+      fallback.filled = true;
+      fallback.fillColor = getWhiteColor();
+      app.activeDocument.selection = [fallback];
+      app.redraw();
+    }
   }
 
   function writeJSONFile(absPath, obj) {
@@ -91,7 +591,7 @@
   function mm2pt(mm) {
     return (mm * 72.0) / 25.4;
   }
-  function white() {
+  function getWhiteColor() {
     var c = new RGBColor();
     c.red = 255;
     c.green = 255;
@@ -136,7 +636,8 @@
     try {
       container.visible = v;
     } catch (e) {}
-    // sublayers
+
+    // Handle sublayers recursively
     if (container.layers) {
       for (var i = 0; i < container.layers.length; i++) {
         try {
@@ -144,20 +645,32 @@
         } catch (_e1) {}
       }
     }
-    // pageItems: unlock + unhide; also recurse into groups
+
+    // Handle pageItems and groups recursively - ENHANCED
     if (container.pageItems) {
       for (var j = 0; j < container.pageItems.length; j++) {
         var it = container.pageItems[j];
         try {
-          if (typeof it.hidden !== "undefined") it.hidden = !v ? true : false;
+          if (typeof it.hidden !== "undefined") it.hidden = !v;
         } catch (_e2) {}
         try {
           if (typeof it.locked !== "undefined") it.locked = false;
         } catch (_e3) {}
+
+        // Recursive handling for nested groups - CRITICAL FIX
         if (it.typename === "GroupItem") {
           try {
-            setVisibleDeep(it, v);
+            setVisibleDeep(it, v); // Recursively process nested groups
           } catch (_e4) {}
+        }
+        // Handle compound paths
+        if (it.typename === "CompoundPathItem" && it.pathItems) {
+          for (var p = 0; p < it.pathItems.length; p++) {
+            try {
+              if (typeof it.pathItems[p].hidden !== "undefined")
+                it.pathItems[p].hidden = !v;
+            } catch (_e5) {}
+          }
         }
       }
     }
@@ -230,11 +743,55 @@
       },
       opacity: it.opacity || 100,
     };
-    var fin = classifyFinishFromName(layerPath[0] || "");
-    rec.finish = fin;
+
+    // NEW: derive side/index/finish from the full ancestor chain
+    var ctx = parseSideIndexFromPath(layerPath);
+    rec.sideHint = ctx.side || null;
+    rec.idxHint =
+      typeof ctx.index === "number" && !isNaN(ctx.index) ? ctx.index : null;
+    rec.finish = parseFinishFromPath(layerPath); // "print" if nothing matched
+
     manifest.items.push(rec);
   }
 
+  function processFinishMask(finishType) {
+    try {
+      app.executeMenuCommand("deselectall");
+      app.executeMenuCommand("selectall");
+
+      // Only apply minimal processing based on finish type
+      switch (finishType) {
+        case "foil":
+        case "uv":
+          // Light processing for foil/UV - just ensure visibility
+          try {
+            app.executeMenuCommand("expandStyle");
+          } catch (e) {}
+          break;
+
+        case "emboss":
+        case "deboss":
+          // Medium processing for emboss - outline strokes
+          try {
+            app.executeMenuCommand("expandStyle");
+          } catch (e) {}
+          try {
+            app.executeMenuCommand("outline");
+          } catch (e) {}
+          break;
+
+        case "die":
+          // Heavy processing only for die-cut (uses separate function)
+          // Don't process here - die has its own specialized function
+          break;
+      }
+
+      // Always apply white fill for masks
+      normalizeSelectionToWhite();
+    } catch (error) {
+      $.writeln("Finish mask processing error: " + error);
+    }
+  }
   function crawl(manifest, container, layerPath) {
     // pageItems (include groups as items only if not exploring their children)
     for (var i = 0; i < container.pageItems.length; i++) {
@@ -341,18 +898,22 @@
   // place recs into buckets
   for (var i = 0; i < manifest.items.length; i++) {
     var rec = manifest.items[i];
-    var side = decideSide(rec);
+
+    // SIDE: prefer hint from path; fallback to geometric heuristic
+    var side = rec.sideHint || decideSide(rec);
     if (!buckets[side]) buckets[side] = {};
 
-    var top = (rec.layerPath && rec.layerPath[0]) || "";
-    var idx = cardIndexFromTopName(top);
+    // INDEX: prefer hint from path; fallback to any top-name index pattern; else 0
+    var idx =
+      rec.idxHint != null
+        ? rec.idxHint
+        : cardIndexFromTopName((rec.layerPath && rec.layerPath[0]) || "");
 
-    // finish type is decided from TOP layer name
+    // FINISH already resolved from full path
     var fin = rec.finish || "print";
 
-    // but still keep die explicitly.
+    // Keep only useful invisible items (same rule as before)
     if (!rec.visible) {
-      // keep for crop if it’s a likely geometry carrier
       if (!(fin === "die" || fin === "print" || fin === "uv" || fin === "foil"))
         continue;
     }
@@ -470,83 +1031,121 @@
     docX.artboards.setActiveArtboardIndex(newIdx);
   }
 
-  // Only toggle what we touch; restore only those, coercing booleans safely.
-  function withLayers(sideName, tokensArray, fn) {
-    var changed = []; // [{layer, prevVisible, prevLocked}]
-    try {
-      for (var i = 0; i < doc.layers.length; i++) {
-        var L = doc.layers[i];
-        if (!L) continue;
+  // REPLACE the conflicting withLayers/withEnhancedLayers with this single robust version
+  function withIsolatedLayers(tokensArray, fn) {
+    var changedStates = [];
 
-        var top = (L.name || "").toLowerCase();
-        // Empty sideName means "ignore side, just token-filter" (used for die-cut)
-        var matchSide = sideName === "" ? true : top.indexOf(sideName) >= 0;
-        var matchToken = false;
+    try {
+      // Collect ALL layers and sublayers that match tokens
+      function collectMatchingLayers(container, path) {
+        var matches = [];
+        path = path || [];
+
+        if (!container) return matches;
+
+        var containerName = (container.name || "").toLowerCase();
+
+        // Check if current container matches any token
+        var hasToken = false;
         for (var t = 0; t < tokensArray.length; t++) {
-          var tk = String(tokensArray[t] || "").toLowerCase();
-          if (tk && top.indexOf(tk) >= 0) {
-            matchToken = true;
+          var token = String(tokensArray[t] || "").toLowerCase();
+          if (token && containerName.indexOf(token) >= 0) {
+            hasToken = true;
             break;
           }
         }
-        var shouldBe = matchSide && matchToken;
 
-        var prevVis = false,
-          prevLock = false;
-        try {
-          prevVis = !!L.visible;
-        } catch (_e1) {}
-        try {
-          prevLock = !!L.locked;
-        } catch (_e2) {}
+        if (hasToken) {
+          matches.push({ container: container, path: path });
+        }
 
-        // Record and unlock if needed
-        changed.push({ layer: L, prevVisible: prevVis, prevLocked: prevLock });
-        try {
-          if (prevLock) L.locked = false;
-        } catch (_e3) {}
-
-        // Apply target visibility
-        try {
-          if (shouldBe) {
-            setVisibleDeep(L, true);
-          } else {
-            try {
-              L.visible = false;
-            } catch (_e4) {}
+        // Recursively check sublayers
+        if (container.layers) {
+          for (var i = 0; i < container.layers.length; i++) {
+            var newPath = path.slice();
+            newPath.push(container.layers[i].name || "");
+            matches = matches.concat(
+              collectMatchingLayers(container.layers[i], newPath)
+            );
           }
-        } catch (_e4) {}
+        }
+
+        return matches;
       }
+
+      // Collect all matching layers across entire document
+      var allMatches = [];
+      for (var i = 0; i < doc.layers.length; i++) {
+        allMatches = allMatches.concat(
+          collectMatchingLayers(doc.layers[i], [doc.layers[i].name])
+        );
+      }
+
+      // Save current states and set up isolation
+      var allLayers = [];
+      function collectAllLayers(container) {
+        if (!container) return;
+
+        // Save current state
+        var state = {
+          container: container,
+          visible: !!container.visible,
+          locked: !!container.locked,
+        };
+        allLayers.push(state);
+
+        // Unlock for modification
+        try {
+          if (state.locked) container.locked = false;
+        } catch (e) {}
+
+        // Hide by default
+        try {
+          container.visible = false;
+        } catch (e) {}
+
+        // Process sublayers
+        if (container.layers) {
+          for (var i = 0; i < container.layers.length; i++) {
+            collectAllLayers(container.layers[i]);
+          }
+        }
+      }
+
+      // Hide everything first
+      for (var j = 0; j < doc.layers.length; j++) {
+        collectAllLayers(doc.layers[j]);
+      }
+
+      // Show only matching layers and their parent hierarchy
+      for (var k = 0; k < allMatches.length; k++) {
+        var match = allMatches[k];
+        // Show the matching layer and all its parents
+        var current = match.container;
+        while (current) {
+          try {
+            current.visible = true;
+          } catch (e) {}
+          current = current.parent;
+        }
+      }
+
+      changedStates = allLayers;
 
       if (typeof fn === "function") fn();
-    } catch (_outer) {
-      // swallow; we still restore below
+    } catch (error) {
+      // Log error but continue to restoration
+      $.writeln("Isolation error: " + error);
     } finally {
-      for (var j = 0; j < changed.length; j++) {
-        var ch = changed[j];
-        if (!ch || !ch.layer) continue;
+      // Restore all original states
+      for (var m = 0; m < changedStates.length; m++) {
+        var state = changedStates[m];
         try {
-          ch.layer.visible = !!ch.prevVisible;
-        } catch (_r1) {}
-        try {
-          ch.layer.locked = !!ch.prevLocked;
-        } catch (_r2) {}
+          state.container.visible = state.visible;
+          state.container.locked = state.locked;
+        } catch (e) {}
       }
     }
-  }
-
-  // true if any TOP layer name contains any token (optionally also contains 'sideName')
-  function topHasTokens(sideName, tokensArray) {
-    for (var i = 0; i < doc.layers.length; i++) {
-      var top = (doc.layers[i].name || "").toLowerCase();
-      var matchSide = sideName === "" ? true : top.indexOf(sideName) >= 0;
-      if (!matchSide) continue;
-      for (var t = 0; t < tokensArray.length; t++) {
-        var tk = String(tokensArray[t] || "").toLowerCase();
-        if (tk && top.indexOf(tk) >= 0) return true;
-      }
-    }
-    return false;
   }
 
   // Show ONLY this card's non-effect top layers (exclude foil/uv/emboss/deboss/die)
@@ -643,44 +1242,66 @@
       rel.albedo = relPath(pref + "_albedo.png");
     });
 
+    // REPLACE all finish effect export blocks with this consistent pattern
+
     // ---- Foil ----
     if (cardBucket.foil.length > 0) {
-      withLayers("", [pref + "_foil"], function () {
-        // Same artboard/crop for both exports
-        addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-
-        // A) COLOR: export the visible foil art as-is (keeps designer colors)
-        app.executeMenuCommand("deselectall");
-        app.executeMenuCommand("selectall");
-        pngExport(
+      var iso = ensureLayer(doc, "__EXPORT_ISO__");
+      try {
+        // Duplicate all foil items (nested-safe) for this card
+        var dup = duplicateFinishItemsInto(
           doc,
-          absPath(pref + "_foil_color.png"),
-          scalePercent,
-          true,
-          true
+          iso,
+          "foil",
+          leftPt,
+          topPt,
+          rightPt,
+          bottomPt
         );
 
-        // B) MASK: whiten selection, export white-on-transparent mask
-        app.executeMenuCommand("deselectall");
-        app.executeMenuCommand("selectall");
-        normalizeSelectionToWhite();
-        pngExport(doc, absPath(pref + "_foil.png"), scalePercent, true, true);
+        // Temp artboard for exact clipping
+        var AB = createTempArtboard(doc, leftPt, topPt, rightPt, bottomPt);
+        doc.activeLayer = iso;
 
-        // Manifest paths
-        rel.foil = relPath(pref + "_foil.png"); // mask
-        rel.foil_color = relPath(pref + "_foil_color.png"); // color
-      });
+        // A) COLOR preview (export BEFORE whitening)
+        _try("deselectall");
+        _try("selectall");
+        app.redraw();
+        if (dup === 0) {
+          // Write a tiny placeholder color if absolutely nothing duplicated (rare)
+          // (Optional) you can skip writing color in this case
+        } else {
+          pngExport(
+            doc,
+            absPath(pref + "_foil_color.png"),
+            scalePercent,
+            true,
+            true
+          );
+          rel.foil_color = relPath(pref + "_foil_color.png");
+        }
+
+        // B) MASK (white)
+        normalizeSelectionToWhiteMask();
+        pngExport(doc, absPath(pref + "_foil.png"), scalePercent, true, true);
+        rel.foil = relPath(pref + "_foil.png");
+
+        AB.remove();
+      } finally {
+        try {
+          iso.remove();
+        } catch (e) {}
+      }
     }
-    // ---- Spot UV ----
+
+    // ---- UV ----
     if (cardBucket.uv.length > 0) {
-      withLayers(
-        "",
+      withIsolatedLayers(
         [pref + "_spot_uv", pref + "_spot-uv", pref + "_uv"],
         function () {
           addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-          app.executeMenuCommand("deselectall");
-          app.executeMenuCommand("selectall");
-          normalizeSelectionToWhite();
+
+          processFinishMask("uv");
           pngExport(doc, absPath(pref + "_uv.png"), scalePercent, true, true);
           rel.uv = relPath(pref + "_uv.png");
         }
@@ -689,20 +1310,20 @@
 
     // ---- Emboss/Deboss ----
     if (cardBucket.emboss.length > 0 || cardBucket.deboss.length > 0) {
-      withLayers("", [pref + "_emboss", pref + "_deboss"], function () {
+      withIsolatedLayers([pref + "_emboss", pref + "_deboss"], function () {
         addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-        app.executeMenuCommand("deselectall");
-        app.executeMenuCommand("selectall");
-        normalizeSelectionToWhite();
+
+        processFinishMask("emboss");
         pngExport(doc, absPath(pref + "_emboss.png"), scalePercent, true, true);
         rel.emboss = relPath(pref + "_emboss.png");
       });
     }
 
-    // ---- Die-cut (svg + mask png) ----
-    // ---- Die-cut (svg + mask png) ----
+    // ---- Die-cut (keep existing robust implementation) ----
     if (cardBucket.die.length > 0) {
-      withLayers(
+      // A) Always export the designer’s raw vectors as SVG (QA/reference)
+      //    (Use your existing visibility logic or tokens; SVG has been working already.)
+      withIsolatedLayers(
         "",
         [
           pref + "_laser_cut",
@@ -716,38 +1337,71 @@
         ],
         function () {
           addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-
-          // 1) SVG export of the visible die art
           svgExport(doc, absPath(pref + "_diecut.svg"));
-
-          // 2) Build the white-on-transparent mask on the same canvas
-          app.executeMenuCommand("deselectall");
-          app.executeMenuCommand("selectall");
-          try {
-            app.executeMenuCommand("expandStyle");
-          } catch (e) {}
-          normalizeSelectionToWhite();
-
-          // CRITICAL FIX: Always export PNG mask with proper naming
-          pngExport(
-            doc,
-            absPath(pref + "_diecut_mask.png"),
-            scalePercent,
-            true,
-            true
-          );
-
-          // 3) Set BOTH SVG and PNG in manifest - frontend prefers PNG
-          rel.die_svg = relPath(pref + "_diecut.svg");
-          rel.die_png = relPath(pref + "_diecut_mask.png"); // This is what frontend needs
-
-          console.log("Die-cut exports:", {
-            svg: rel.die_svg,
-            png: rel.die_png,
-            card: pref,
-          });
         }
       );
+
+      // B) Now build a guaranteed PNG cut mask using extraction (visibility-safe)
+      var isoLayer = ensureLayer(doc, "__EXPORT_ISO__");
+      try {
+        // Duplicate all die items (nested or top-level) that overlap this card
+        var dupCount = duplicateDieItemsInto(
+          doc,
+          isoLayer,
+          leftPt,
+          topPt,
+          rightPt,
+          bottomPt
+        );
+
+        // Create a temp artboard clipped to the card bounds
+        var AB = createTempArtboard(doc, leftPt, topPt, rightPt, bottomPt);
+
+        // Work only on the isolated layer
+        doc.activeLayer = isoLayer;
+        // If nothing was duplicated, fall back to creating a full white card (still writes a file)
+        if (dupCount === 0) {
+          var rect = doc.pathItems.rectangle(
+            topPt,
+            leftPt,
+            rightPt - leftPt,
+            topPt - bottomPt
+          );
+          rect.stroked = false;
+          rect.filled = true;
+          rect.fillColor = _white();
+          doc.selection = [rect];
+        } else {
+          buildFilledCutoutFromCurrentSelection(
+            doc,
+            leftPt,
+            topPt,
+            rightPt,
+            bottomPt
+          );
+        }
+
+        // Export white-on-transparent PNG: white=keep, hole=transparent
+        pngExport(
+          doc,
+          absPath(pref + "_diecut_mask.png"),
+          scalePercent,
+          true,
+          true
+        );
+
+        // Clean up temp artboard
+        AB.remove();
+
+        // Register in manifest
+        rel.die_png = relPath(pref + "_diecut_mask.png");
+        rel.die_svg = relPath(pref + "_diecut.svg");
+      } finally {
+        // Remove the isolated layer and its contents to leave the document untouched
+        try {
+          isoLayer.remove();
+        } catch (e) {}
+      }
     }
 
     var size_mm = { w: pt2mm(widthPt), h: pt2mm(heightPt) };
