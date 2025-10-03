@@ -65,11 +65,12 @@ export function adaptParserJsonToViewer(data) {
           filename.includes("_cut.")
         ) {
           const isPng = filename.endsWith(".png");
-          if (!result.dieCutUrl) {
-            result.dieCutUrl = value; // first seen
-          }
-          // Prefer PNG if found later
-          if (isPng) {
+          // Prefer PNG. If we already stored an SVG, replace it.
+          if (
+            !result.dieCutUrl ||
+            isPng ||
+            result.dieCutUrl.toLowerCase().endsWith(".svg")
+          ) {
             result.dieCutUrl = value;
           }
         }
@@ -106,7 +107,13 @@ export function adaptParserJsonToViewer(data) {
     // Prefer V3 per-card entries FIRST so we see die_png before legacy
     const cardsArr = data?.maps?.[`${side}_cards`];
     if (Array.isArray(cardsArr)) {
-      cardsArr.forEach((card) => extractUrls(card?.maps));
+      cardsArr.forEach((card) => {
+        // Handle both layer and index fields for compatibility
+        const cardId = card?.layer ?? card?.index;
+        if (cardId !== undefined) {
+          extractUrls(card?.maps);
+        }
+      });
     }
     // Then legacy side & geometry
     extractUrls(data?.maps?.[side]);

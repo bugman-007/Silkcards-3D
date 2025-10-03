@@ -56,6 +56,8 @@ function toBinaryMaskCanvas(image) {
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
+
+  // willReadFrequently helps Chrome avoid "too slow to readback" on large PNGs
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
   ctx.clearRect(0, 0, w, h);
@@ -65,24 +67,16 @@ function toBinaryMaskCanvas(image) {
   const d = imgData.data;
 
   let hasContent = false;
+  // Use the source PNG's alpha directly as the mask
   for (let i = 0; i < d.length; i += 4) {
-    const r = d[i],
-      g = d[i + 1],
-      b = d[i + 2],
-      a = d[i + 3];
-    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-    const effectiveAlpha = a / 255;
-    const combined = luminance * effectiveAlpha;
-    const alphaValue = 255 - Math.round(combined * 255);
-
-    d[i] = d[i + 1] = d[i + 2] = alphaValue;
-    d[i + 3] = 255;
-
-    if (alphaValue < 250) hasContent = true;
+    const a = d[i + 3]; // 0..255 from source PNG
+    d[i] = d[i + 1] = d[i + 2] = a; // write alpha into R,G,B
+    d[i + 3] = 255; // make the mask texture fully opaque
+    if (a > 0 && a < 255) hasContent = true; // any real cut edge?
   }
 
   ctx.putImageData(imgData, 0, 0);
-  return hasContent ? canvas : null;
+  return hasContent ? canvas : canvas; // always return; empty holes still OK
 }
 
 function CardModel({ cardData, autoRotate = false, showEffects = true }) {

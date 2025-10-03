@@ -52,10 +52,8 @@
     cardRight,
     cardBottom
   ) {
-    // Duplicate any visible pageItem whose name (or any ancestor’s name) has die tokens
-    // and whose bounds overlap the card rect.
     function overlaps(b) {
-      if (!b) return false; // [L,T,R,B]
+      if (!b) return false;
       var L = b[0],
         T = b[1],
         R = b[2],
@@ -67,59 +65,70 @@
         T <= cardBottom
       );
     }
+
     var dupCount = 0;
-    // Walk all layers/items shallowly; use ancestor names to detect die.
-    for (var li = 0; li < doc.layers.length; li++) {
-      var layer = doc.layers[li];
-      var stack = [{ node: layer, dieCtx: dieTokenMatch(layer.name) }];
-      while (stack.length) {
-        var cur = stack.pop();
-        var node = cur.node;
-        var dieCtx = cur.dieCtx || dieTokenMatch(node.name);
-        // enqueue children
-        if (node.layers) {
-          for (var k = 0; k < node.layers.length; k++) {
-            stack.push({ node: node.layers[k], dieCtx: dieCtx });
-          }
-        }
-        if (node.pageItems) {
-          for (var j = 0; j < node.pageItems.length; j++) {
-            var it = node.pageItems[j];
-            var itDie = dieCtx || dieTokenMatch(it.name);
-            // visible & unlocked only
-            var isVisible = true,
-              isLocked = false;
-            try {
-              isVisible = it.hidden ? false : true;
-            } catch (e) {}
-            try {
-              isLocked = it.locked ? true : false;
-            } catch (e) {}
-            if (!itDie || !isVisible || isLocked) continue;
-            var b;
-            try {
-              b = it.geometricBounds;
-            } catch (e) {
-              b = null;
-            }
-            if (!overlaps(b)) continue;
-            try {
-              var dup = it.duplicate(
-                targetLayer,
-                ElementPlacement.PLACEATBEGINNING
-              );
-              // make sure dup is visible/unlocked
-              try {
-                dup.hidden = false;
-              } catch (e) {}
-              try {
-                dup.locked = false;
-              } catch (e) {}
-              dupCount++;
-            } catch (e) {}
-          }
+
+    function duplicateNode(node, dieCtx) {
+      var name = "";
+      try {
+        name = String(node.name || "");
+      } catch (e) {}
+      var hereIsDie = dieCtx || dieTokenMatch(name);
+
+      // Recurse into sublayers
+      if (node.layers) {
+        for (var i = 0; i < node.layers.length; i++) {
+          duplicateNode(node.layers[i], hereIsDie);
         }
       }
+
+      // Recurse/duplicate pageItems
+      if (node.pageItems) {
+        for (var j = 0; j < node.pageItems.length; j++) {
+          var it = node.pageItems[j];
+          try {
+            if (it.locked) continue;
+          } catch (e) {}
+
+          var isGroup = it.typename === "GroupItem";
+          var isCompound = it.typename === "CompoundPathItem";
+
+          if (isGroup || isCompound) {
+            // Recursively process groups and compound paths
+            duplicateNode(it, hereIsDie);
+            continue;
+          }
+
+          // For leaf items, check if they're die geometry
+          if (!hereIsDie && !dieTokenMatch(it.name)) continue;
+
+          // Check bounds overlap
+          var b = null;
+          try {
+            b = it.geometricBounds;
+          } catch (e) {}
+          if (!overlaps(b)) continue;
+
+          // Duplicate to target layer
+          try {
+            var dup = it.duplicate(
+              targetLayer,
+              ElementPlacement.PLACEATBEGINNING
+            );
+            try {
+              dup.hidden = false;
+            } catch (e) {}
+            try {
+              dup.locked = false;
+            } catch (e) {}
+            dupCount++;
+          } catch (e) {}
+        }
+      }
+    }
+
+    for (var li = 0; li < doc.layers.length; li++) {
+      duplicateNode(doc.layers[li], false);
     }
     return dupCount;
   }
@@ -1324,7 +1333,6 @@
       // A) Always export the designer’s raw vectors as SVG (QA/reference)
       //    (Use your existing visibility logic or tokens; SVG has been working already.)
       withIsolatedLayers(
-        "",
         [
           pref + "_laser_cut",
           pref + "_laser-cut",
@@ -1344,7 +1352,7 @@
       // B) Now build a guaranteed PNG cut mask using extraction (visibility-safe)
       var isoLayer = ensureLayer(doc, "__EXPORT_ISO__");
       try {
-        // Duplicate all die items (nested or top-level) that overlap this card
+        // 1) Recursively duplicate all die items that overlap card area
         var dupCount = duplicateDieItemsInto(
           doc,
           isoLayer,
@@ -1354,13 +1362,25 @@
           bottomPt
         );
 
-        // Create a temp artboard clipped to the card bounds
+        // 2) Create temporary artboard for clean export
         var AB = createTempArtboard(doc, leftPt, topPt, rightPt, bottomPt);
 
-        // Work only on the isolated layer
+        // 3) Isolate: hide all layers except our isolation layer
+        var saved = [];
+        for (var z = 0; z < doc.layers.length; z++) {
+          var LZ = doc.layers[z];
+          saved.push({ L: LZ, v: !!LZ.visible, k: !!LZ.locked });
+          try {
+            LZ.locked = false;
+          } catch (e) {}
+          try {
+            LZ.visible = LZ === isoLayer;
+          } catch (e) {}
+        }
         doc.activeLayer = isoLayer;
-        // If nothing was duplicated, fall back to creating a full white card (still writes a file)
+
         if (dupCount === 0) {
+          // Fallback: full white card (no die cuts)
           var rect = doc.pathItems.rectangle(
             topPt,
             leftPt,
@@ -1369,19 +1389,14 @@
           );
           rect.stroked = false;
           rect.filled = true;
-          rect.fillColor = _white();
+          rect.fillColor = getWhiteColor();
           doc.selection = [rect];
         } else {
-          buildFilledCutoutFromCurrentSelection(
-            doc,
-            leftPt,
-            topPt,
-            rightPt,
-            bottomPt
-          );
+          // Build proper die mask with holes
+          buildFilledDieMaskOnArtboard(doc, leftPt, topPt, rightPt, bottomPt);
         }
 
-        // Export white-on-transparent PNG: white=keep, hole=transparent
+        // 4) Export PNG (white card with transparent holes)
         pngExport(
           doc,
           absPath(pref + "_diecut_mask.png"),
@@ -1390,14 +1405,26 @@
           true
         );
 
-        // Clean up temp artboard
+        // 5) Restore layer states
+        for (var s = 0; s < saved.length; s++) {
+          try {
+            saved[s].L.visible = saved[s].v;
+          } catch (e) {}
+          try {
+            saved[s].L.locked = saved[s].k;
+          } catch (e) {}
+        }
         AB.remove();
 
-        // Register in manifest
+        // Register files in manifest
         rel.die_png = relPath(pref + "_diecut_mask.png");
         rel.die_svg = relPath(pref + "_diecut.svg");
+        rel.effects = rel.effects || {};
+        rel.effects.laser_cut = {
+          mask_png: rel.die_png,
+          svg: rel.die_svg,
+        };
       } finally {
-        // Remove the isolated layer and its contents to leave the document untouched
         try {
           isoLayer.remove();
         } catch (e) {}
@@ -1449,11 +1476,11 @@
   manifest.geometry.front_cards = [];
   for (var iF = 0; iF < frontCards.length; iF++) {
     manifest.maps.front_cards.push({
-      index: frontCards[iF].index,
+      layer: frontCards[iF].index, // CHANGED: index → layer
       maps: frontCards[iF].maps,
     });
     manifest.geometry.front_cards.push({
-      index: frontCards[iF].index,
+      layer: frontCards[iF].index, // CHANGED: index → layer
       meta: frontCards[iF].geometry,
     });
   }
@@ -1461,11 +1488,11 @@
   manifest.geometry.back_cards = [];
   for (var iB = 0; iB < backCards.length; iB++) {
     manifest.maps.back_cards.push({
-      index: backCards[iB].index,
+      layer: backCards[iB].index, // CHANGED: index → layer
       maps: backCards[iB].maps,
     });
     manifest.geometry.back_cards.push({
-      index: backCards[iB].index,
+      layer: backCards[iB].index, // CHANGED: index → layer
       meta: backCards[iB].geometry,
     });
   }
