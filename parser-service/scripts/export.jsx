@@ -52,83 +52,92 @@
     cardRight,
     cardBottom
   ) {
+    // Duplicate any visible pageItem whose name (or any ancestor’s name) has die tokens
+    // and whose bounds overlap the card rect.
     function overlaps(b) {
-      if (!b) return false;
-      var L = b[0],
-        T = b[1],
-        R = b[2],
-        B = b[3];
-      return !(
-        R <= cardLeft ||
-        L >= cardRight ||
-        B >= cardTop ||
-        T <= cardBottom
-      );
-    }
+  if (!b) return false; // b = [L,T,R,B] in pt
+  var eps = 0.5;
 
+  // normalize item rect
+  var l = Math.min(b[0], b[2]);
+  var r = Math.max(b[0], b[2]);
+  var t = Math.max(b[1], b[3]); // Illustrator: top is the larger Y
+  var bt = Math.min(b[1], b[3]);
+
+  // normalize card rect
+  var cl = Math.min(cardLeft,  cardRight);
+  var cr = Math.max(cardLeft,  cardRight);
+  var ct = Math.max(cardTop,   cardBottom);
+  var cb = Math.min(cardTop,   cardBottom);
+
+  // standard AABB overlap with a tiny tolerance
+  if (r < cl - eps) return false;
+  if (l > cr + eps) return false;
+  if (bt > ct + eps) return false;
+  if (t < cb - eps) return false;
+  return true;
+}
     var dupCount = 0;
-
-    function duplicateNode(node, dieCtx) {
-      var name = "";
-      try {
-        name = String(node.name || "");
-      } catch (e) {}
-      var hereIsDie = dieCtx || dieTokenMatch(name);
-
-      // Recurse into sublayers
-      if (node.layers) {
-        for (var i = 0; i < node.layers.length; i++) {
-          duplicateNode(node.layers[i], hereIsDie);
-        }
-      }
-
-      // Recurse/duplicate pageItems
-      if (node.pageItems) {
-        for (var j = 0; j < node.pageItems.length; j++) {
-          var it = node.pageItems[j];
-          try {
-            if (it.locked) continue;
-          } catch (e) {}
-
-          var isGroup = it.typename === "GroupItem";
-          var isCompound = it.typename === "CompoundPathItem";
-
-          if (isGroup || isCompound) {
-            // Recursively process groups and compound paths
-            duplicateNode(it, hereIsDie);
-            continue;
-          }
-
-          // For leaf items, check if they're die geometry
-          if (!hereIsDie && !dieTokenMatch(it.name)) continue;
-
-          // Check bounds overlap
-          var b = null;
-          try {
-            b = it.geometricBounds;
-          } catch (e) {}
-          if (!overlaps(b)) continue;
-
-          // Duplicate to target layer
-          try {
-            var dup = it.duplicate(
-              targetLayer,
-              ElementPlacement.PLACEATBEGINNING
-            );
-            try {
-              dup.hidden = false;
-            } catch (e) {}
-            try {
-              dup.locked = false;
-            } catch (e) {}
-            dupCount++;
-          } catch (e) {}
-        }
-      }
-    }
-
+    // Walk all layers/items shallowly; use ancestor names to detect die.
     for (var li = 0; li < doc.layers.length; li++) {
-      duplicateNode(doc.layers[li], false);
+      var layer = doc.layers[li];
+      var stack = [{ node: layer, dieCtx: dieTokenMatch(layer.name) }];
+      while (stack.length) {
+        var cur = stack.pop();
+        var node = cur.node;
+        var dieCtx = cur.dieCtx || dieTokenMatch(node.name);
+        // enqueue children
+        if (node.layers) {
+          for (var k = 0; k < node.layers.length; k++) {
+            stack.push({ node: node.layers[k], dieCtx: dieCtx });
+          }
+        }
+        if (node.pageItems) {
+          for (var j = 0; j < node.pageItems.length; j++) {
+            var it = node.pageItems[j];
+            var itDie = dieCtx || dieTokenMatch(it.name);
+            // visible & unlocked only
+            var isVisible = true,
+              isLocked = false;
+            try {
+              isVisible = it.hidden ? false : true;
+            } catch (e) {}
+            try {
+              isLocked = it.locked ? true : false;
+            } catch (e) {}
+            if (!itDie || !isVisible || isLocked) continue;
+            var b;
+            try {
+              b = it.geometricBounds;
+            } catch (e) {
+              b = null;
+            }
+            if (!overlaps(b)) continue;
+            try {
+              var dup = it.duplicate(
+                targetLayer,
+                ElementPlacement.PLACEATBEGINNING
+              );
+              try {
+                dup.hidden = false;
+              } catch (e) {}
+              try {
+                dup.locked = false;
+              } catch (e) {}
+              try {
+                if (typeof dup.printable !== "undefined") dup.printable = true;
+              } catch (e) {}
+              try {
+                if (typeof dup.guides !== "undefined") dup.guides = false;
+              } catch (e) {}
+              try {
+                if (typeof dup.template !== "undefined") dup.template = false;
+              } catch (e) {}
+              dupCount++;
+            } catch (e) {}
+          }
+        }
+      }
     }
     return dupCount;
   }
@@ -176,11 +185,12 @@
     rect.stroked = false;
     rect.filled = true;
     rect.fillColor = _white();
-    rect.move(doc, ElementPlacement.PLACEATBEGINNING);
+    rect.move(doc.activeLayer, ElementPlacement.PLACEATEND);
 
     // Subtract die region from full card (makes the hole), then expand to finalize
     _try("deselectall");
     _try("selectall");
+    $.writeln("Die mask selection count: " + (doc.selection ? doc.selection.length : 0));
     _try("Live Pathfinder Subtract");
     _try("expandStyle");
     app.redraw();
@@ -541,7 +551,7 @@
     rect.stroked = false;
     rect.filled = true;
     rect.fillColor = getWhiteColor();
-    rect.move(doc, ElementPlacement.PLACEATBEGINNING);
+    rect.move(doc.activeLayer, ElementPlacement.PLACEATEND);
 
     // Subtract die region from the full card rectangle (creates the "hole")
     _try("deselectall");
@@ -957,26 +967,23 @@
   }
 
   function pickCrop(sideCardBucket) {
-    // Prefer die → then print → then union of effects
-    var b = unionBoundsPt(sideCardBucket.print);
-    if (!b) {
-      b = unionBoundsPt(
-        [].concat(
-          sideCardBucket.foil,
-          sideCardBucket.uv,
-          sideCardBucket.emboss,
-          sideCardBucket.deboss
-        )
-      );
-    }
-    if (!b) {
-      // last resort: active artboard
-      var AB =
-        doc.artboards[doc.artboards.getActiveArtboardIndex()].artboardRect; // [L,T,R,B]
-      b = [AB[0], AB[1], AB[2], AB[3]];
-    }
-    return b;
+  // Prefer DIE → then PRINT → then union of effects → else active artboard
+  var b = unionBoundsPt(sideCardBucket.die);
+  if (!b) b = unionBoundsPt(sideCardBucket.print);
+  if (!b) {
+    b = unionBoundsPt([].concat(
+      sideCardBucket.foil,
+      sideCardBucket.uv,
+      sideCardBucket.emboss,
+      sideCardBucket.deboss
+    ));
   }
+  if (!b) {
+    var AB = doc.artboards[doc.artboards.getActiveArtboardIndex()].artboardRect;
+    b = [AB[0], AB[1], AB[2], AB[3]];
+  }
+  return b;
+}
 
   // ---------- export area ----------
   var outFile = new File(outPath);
@@ -1042,116 +1049,118 @@
 
   // REPLACE the conflicting withLayers/withEnhancedLayers with this single robust version
   function withIsolatedLayers(tokensArray, fn) {
-    var changedStates = [];
+    // Makes only the layers that match ANY token visible,
+    // and also turns ON the entire descendant tree of each match.
+    // Parents of the match are also made visible (so the tree path is visible).
+    // Everything else is hidden. All states are restored afterwards.
+
+    // Helper: case-insensitive “does name include any token?”
+    function nameHasToken(nm, toks) {
+      nm = String(nm || "").toLowerCase();
+      for (var t = 0; t < toks.length; t++) {
+        var tk = String(toks[t] || "").toLowerCase();
+        if (tk && nm.indexOf(tk) >= 0) return true;
+      }
+      return false;
+    }
+
+    // Collect all layers (and sublayers)
+    var all = [];
+    (function walk(layer) {
+      if (!layer) return;
+      all.push(layer);
+      if (layer.layers) {
+        for (var i = 0; i < layer.layers.length; i++) walk(layer.layers[i]);
+      }
+    })(app.activeDocument); // Illustrator lets us iterate via doc.layers below
+
+    // Snapshot original states and hide everything
+    var saved = [];
+    for (var L = 0; L < app.activeDocument.layers.length; L++) {
+      (function hideTree(node) {
+        if (!node) return;
+        saved.push({ node: node, vis: !!node.visible, lock: !!node.locked });
+        try {
+          if (node.locked) node.locked = false;
+        } catch (e) {}
+        try {
+          node.visible = false;
+        } catch (e) {}
+
+        if (node.layers) {
+          for (var i = 0; i < node.layers.length; i++) hideTree(node.layers[i]);
+        }
+      })(app.activeDocument.layers[L]);
+    }
+
+    // Helper we already have elsewhere: turns a container AND all descendants visible
+    function setVisibleDeep(container, v) {
+      try {
+        container.visible = v;
+      } catch (e) {}
+      if (container.layers) {
+        for (var i = 0; i < container.layers.length; i++)
+          setVisibleDeep(container.layers[i], v);
+      }
+      if (container.pageItems) {
+        for (var j = 0; j < container.pageItems.length; j++) {
+          var it = container.pageItems[j];
+          try {
+            if (typeof it.hidden !== "undefined") it.hidden = !v;
+          } catch (e) {}
+          try {
+            if (typeof it.locked !== "undefined") it.locked = false;
+          } catch (e) {}
+          if (it.typename === "GroupItem") setVisibleDeep(it, v);
+          if (it.typename === "CompoundPathItem" && it.pathItems) {
+            for (var p = 0; p < it.pathItems.length; p++) {
+              try {
+                if (typeof it.pathItems[p].hidden !== "undefined")
+                  it.pathItems[p].hidden = !v;
+              } catch (e) {}
+            }
+          }
+        }
+      }
+    }
+
+    // Find all matching layers (by token match in the layer name)
+    var matches = [];
+    for (var r = 0; r < app.activeDocument.layers.length; r++) {
+      (function collect(node) {
+        if (!node) return;
+        if (nameHasToken(node.name, tokensArray)) matches.push(node);
+        if (node.layers) {
+          for (var i = 0; i < node.layers.length; i++) collect(node.layers[i]);
+        }
+      })(app.activeDocument.layers[r]);
+    }
+
+    // Show each match + its ancestors + its whole descendant tree
+    for (var m = 0; m < matches.length; m++) {
+      var cur = matches[m];
+      // turn on the entire matched subtree
+      setVisibleDeep(cur, true);
+      // ensure all ancestors are also visible
+      var parent = cur.parent;
+      while (parent && parent !== app.activeDocument) {
+        try {
+          parent.visible = true;
+        } catch (e) {}
+        parent = parent.parent;
+      }
+    }
 
     try {
-      // Collect ALL layers and sublayers that match tokens
-      function collectMatchingLayers(container, path) {
-        var matches = [];
-        path = path || [];
-
-        if (!container) return matches;
-
-        var containerName = (container.name || "").toLowerCase();
-
-        // Check if current container matches any token
-        var hasToken = false;
-        for (var t = 0; t < tokensArray.length; t++) {
-          var token = String(tokensArray[t] || "").toLowerCase();
-          if (token && containerName.indexOf(token) >= 0) {
-            hasToken = true;
-            break;
-          }
-        }
-
-        if (hasToken) {
-          matches.push({ container: container, path: path });
-        }
-
-        // Recursively check sublayers
-        if (container.layers) {
-          for (var i = 0; i < container.layers.length; i++) {
-            var newPath = path.slice();
-            newPath.push(container.layers[i].name || "");
-            matches = matches.concat(
-              collectMatchingLayers(container.layers[i], newPath)
-            );
-          }
-        }
-
-        return matches;
-      }
-
-      // Collect all matching layers across entire document
-      var allMatches = [];
-      for (var i = 0; i < doc.layers.length; i++) {
-        allMatches = allMatches.concat(
-          collectMatchingLayers(doc.layers[i], [doc.layers[i].name])
-        );
-      }
-
-      // Save current states and set up isolation
-      var allLayers = [];
-      function collectAllLayers(container) {
-        if (!container) return;
-
-        // Save current state
-        var state = {
-          container: container,
-          visible: !!container.visible,
-          locked: !!container.locked,
-        };
-        allLayers.push(state);
-
-        // Unlock for modification
-        try {
-          if (state.locked) container.locked = false;
-        } catch (e) {}
-
-        // Hide by default
-        try {
-          container.visible = false;
-        } catch (e) {}
-
-        // Process sublayers
-        if (container.layers) {
-          for (var i = 0; i < container.layers.length; i++) {
-            collectAllLayers(container.layers[i]);
-          }
-        }
-      }
-
-      // Hide everything first
-      for (var j = 0; j < doc.layers.length; j++) {
-        collectAllLayers(doc.layers[j]);
-      }
-
-      // Show only matching layers and their parent hierarchy
-      for (var k = 0; k < allMatches.length; k++) {
-        var match = allMatches[k];
-        // Show the matching layer and all its parents
-        var current = match.container;
-        while (current) {
-          try {
-            current.visible = true;
-          } catch (e) {}
-          current = current.parent;
-        }
-      }
-
-      changedStates = allLayers;
-
       if (typeof fn === "function") fn();
-    } catch (error) {
-      // Log error but continue to restoration
-      $.writeln("Isolation error: " + error);
     } finally {
-      // Restore all original states
-      for (var m = 0; m < changedStates.length; m++) {
-        var state = changedStates[m];
+      // restore states
+      for (var s = 0; s < saved.length; s++) {
         try {
-          state.container.visible = state.visible;
-          state.container.locked = state.locked;
+          saved[s].node.visible = saved[s].vis;
+        } catch (e) {}
+        try {
+          saved[s].node.locked = saved[s].lock;
         } catch (e) {}
       }
     }
@@ -1328,31 +1337,40 @@
       });
     }
 
-    // ---- Die-cut (keep existing robust implementation) ----
+    // ---- Die-cut (robust isolation via duplication ONLY) ----
     if (cardBucket.die.length > 0) {
-      // A) Always export the designer’s raw vectors as SVG (QA/reference)
-      //    (Use your existing visibility logic or tokens; SVG has been working already.)
-      withIsolatedLayers(
-        [
-          pref + "_laser_cut",
-          pref + "_laser-cut",
-          pref + "_die",
-          pref + "_die_cut",
-          pref + "_die-cut",
-          pref + "_diecut",
-          pref + "_cutline",
-          pref + "_cut_line",
-        ],
-        function () {
-          addArtboard(doc, [leftPt, topPt, rightPt, bottomPt]);
-          svgExport(doc, absPath(pref + "_diecut.svg"));
-        }
-      );
-
-      // B) Now build a guaranteed PNG cut mask using extraction (visibility-safe)
       var isoLayer = ensureLayer(doc, "__EXPORT_ISO__");
+      var state = [];
+
+      // helper: hide all layers except our iso layer, snapshot states
+      function hideAllExceptIso() {
+        for (var i = 0; i < doc.layers.length; i++) {
+          var L = doc.layers[i];
+          var vis0 = !!L.visible,
+            lock0 = !!L.locked;
+          state.push({ L: L, vis0: vis0, lock0: lock0 });
+          try {
+            if (lock0) L.locked = false;
+          } catch (e) {}
+          try {
+            L.visible = L === isoLayer;
+          } catch (e) {}
+        }
+      }
+      function restoreLayerStates() {
+        for (var j = 0; j < state.length; j++) {
+          var s = state[j];
+          try {
+            s.L.visible = s.vis0;
+          } catch (e) {}
+          try {
+            s.L.locked = s.lock0;
+          } catch (e) {}
+        }
+      }
+
       try {
-        // 1) Recursively duplicate all die items that overlap card area
+        // 1) Duplicate *only* die items that overlap this card
         var dupCount = duplicateDieItemsInto(
           doc,
           isoLayer,
@@ -1362,41 +1380,37 @@
           bottomPt
         );
 
-        // 2) Create temporary artboard for clean export
-        var AB = createTempArtboard(doc, leftPt, topPt, rightPt, bottomPt);
-
-        // 3) Isolate: hide all layers except our isolation layer
-        var saved = [];
-        for (var z = 0; z < doc.layers.length; z++) {
-          var LZ = doc.layers[z];
-          saved.push({ L: LZ, v: !!LZ.visible, k: !!LZ.locked });
-          try {
-            LZ.locked = false;
-          } catch (e) {}
-          try {
-            LZ.visible = LZ === isoLayer;
-          } catch (e) {}
-        }
+        // 2) Isolate: only __EXPORT_ISO__ layer visible
+        hideAllExceptIso();
         doc.activeLayer = isoLayer;
 
-        if (dupCount === 0) {
-          // Fallback: full white card (no die cuts)
-          var rect = doc.pathItems.rectangle(
-            topPt,
-            leftPt,
-            rightPt - leftPt,
-            topPt - bottomPt
-          );
-          rect.stroked = false;
-          rect.filled = true;
-          rect.fillColor = getWhiteColor();
-          doc.selection = [rect];
-        } else {
-          // Build proper die mask with holes
-          buildFilledDieMaskOnArtboard(doc, leftPt, topPt, rightPt, bottomPt);
-        }
+        // 3) Clip to exact card bounds with a temp artboard
+        var AB = createTempArtboard(doc, leftPt, topPt, rightPt, bottomPt);
 
-        // 4) Export PNG (white card with transparent holes)
+        // 4) Export SVG of the raw designer vectors (before whitening/subtraction)
+        //    (If nothing duplicated, we still create a 1×1 dot so the file isn't empty.)
+        app.executeMenuCommand("deselectall");
+        app.executeMenuCommand("selectall");
+        if (!doc.selection || doc.selection.length === 0) {
+          var dot = doc.pathItems.rectangle(topPt, leftPt, 1, 1);
+          dot.stroked = false;
+          dot.filled = true;
+          dot.fillColor = getWhiteColor();
+          doc.selection = [dot];
+        }
+        svgExport(doc, absPath(pref + "_diecut.svg"));
+
+        // 5) Build the FILLED cut mask from the duplicated selection
+        //    (white keep, transparent hole)
+        buildFilledCutoutFromCurrentSelection(
+          doc,
+          leftPt,
+          topPt,
+          rightPt,
+          bottomPt
+        );
+
+        // 6) Export white-on-transparent PNG
         pngExport(
           doc,
           absPath(pref + "_diecut_mask.png"),
@@ -1405,29 +1419,17 @@
           true
         );
 
-        // 5) Restore layer states
-        for (var s = 0; s < saved.length; s++) {
-          try {
-            saved[s].L.visible = saved[s].v;
-          } catch (e) {}
-          try {
-            saved[s].L.locked = saved[s].k;
-          } catch (e) {}
-        }
+        // 7) Cleanup
         AB.remove();
 
-        // Register files in manifest
-        rel.die_png = relPath(pref + "_diecut_mask.png");
+        // 8) Register
         rel.die_svg = relPath(pref + "_diecut.svg");
-        rel.effects = rel.effects || {};
-        rel.effects.laser_cut = {
-          mask_png: rel.die_png,
-          svg: rel.die_svg,
-        };
+        rel.die_png = relPath(pref + "_diecut_mask.png");
       } finally {
         try {
           isoLayer.remove();
         } catch (e) {}
+        restoreLayerStates();
       }
     }
 
@@ -1476,11 +1478,11 @@
   manifest.geometry.front_cards = [];
   for (var iF = 0; iF < frontCards.length; iF++) {
     manifest.maps.front_cards.push({
-      layer: frontCards[iF].index, // CHANGED: index → layer
+      index: frontCards[iF].index,
       maps: frontCards[iF].maps,
     });
     manifest.geometry.front_cards.push({
-      layer: frontCards[iF].index, // CHANGED: index → layer
+      index: frontCards[iF].index,
       meta: frontCards[iF].geometry,
     });
   }
@@ -1488,11 +1490,11 @@
   manifest.geometry.back_cards = [];
   for (var iB = 0; iB < backCards.length; iB++) {
     manifest.maps.back_cards.push({
-      layer: backCards[iB].index, // CHANGED: index → layer
+      index: backCards[iB].index,
       maps: backCards[iB].maps,
     });
     manifest.geometry.back_cards.push({
-      layer: backCards[iB].index, // CHANGED: index → layer
+      index: backCards[iB].index,
       meta: backCards[iB].geometry,
     });
   }
