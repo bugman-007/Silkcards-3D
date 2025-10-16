@@ -46,42 +46,59 @@ function maskLooksFilled(tex) {
 }
 
 // Convert colored PNG to binary mask (white on black)
+// Convert colored PNG to binary mask (white on black) - FIXED VERSION
 function toBinaryMaskCanvas(image) {
   if (!image) return null;
-
   const w = image.naturalWidth || image.width;
   const h = image.naturalHeight || image.height;
   if (!w || !h) return null;
 
   const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-
-  // willReadFrequently helps Chrome avoid "too slow to readback" on large PNGs
+  canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
   ctx.clearRect(0, 0, w, h);
   ctx.drawImage(image, 0, 0, w, h);
 
   const imgData = ctx.getImageData(0, 0, w, h);
   const d = imgData.data;
 
-  let hasContent = false;
-  // Use the source PNG's alpha directly as the mask
+  // 1px erosion kernel (remove tiny white rim at grazing angles)
+  const W = w, H = h;
+  const copy = new Uint8ClampedArray(d); // copy before we mutate
+  const lum = (i) => 0.2126*copy[i] + 0.7152*copy[i+1] + 0.0722*copy[i+2];
+
+  // binarize pass
   for (let i = 0; i < d.length; i += 4) {
-    const a = d[i + 3]; // 0..255 from source PNG
-    d[i] = d[i + 1] = d[i + 2] = a; // write alpha into R,G,B
-    d[i + 3] = 255; // make the mask texture fully opaque
-    if (a > 0 && a < 255) hasContent = true; // any real cut edge?
+    const m = lum(i) > 128 ? 255 : 0;     // >128 = keep(white); <=128 = hole(black)
+    d[i] = d[i+1] = d[i+2] = m; d[i+3] = 255;
+  }
+
+  // 1px erosion on WHITE (keep) area — optional but helps prevent halos
+  for (let y = 1; y < H-1; y++) {
+    for (let x = 1; x < W-1; x++) {
+      const idx = (y*W + x) * 4;
+      if (d[idx] === 255) {
+        // if any neighbor is black, turn this pixel black
+        let erode = false;
+        for (let dy=-1; dy<=1 && !erode; dy++){
+          for (let dx=-1; dx<=1; dx++){
+            const n = ((y+dy)*W + (x+dx)) * 4;
+            if (d[n] === 0) { erode = true; break; }
+          }
+        }
+        if (erode) d[idx] = d[idx+1] = d[idx+2] = 0;
+      }
+    }
   }
 
   ctx.putImageData(imgData, 0, 0);
-  return hasContent ? canvas : canvas; // always return; empty holes still OK
+  return canvas;
 }
 
 function CardModel({ cardData, autoRotate = false, showEffects = true }) {
   const cardRef = useRef();
   const { gl } = useThree();
+  const SHOW_DEBUG_MASK = true; // set true only when you want to visualize it
 
   // Extract jobId for asset loading
   const jobId = useMemo(() => {
@@ -371,12 +388,6 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             tex.flipY = true;
             tex.colorSpace = THREE.SRGBColorSpace;
 
-            if (isBack) {
-              tex.wrapS = THREE.RepeatWrapping;
-              tex.repeat.x = -1;
-              tex.offset.x = 1;
-            }
-
             tex.needsUpdate = true;
             console.log("Successfully converted SVG to texture");
             resolve(tex);
@@ -400,11 +411,12 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               tex.flipY = true;
               tex.colorSpace = THREE.SRGBColorSpace;
 
-              if (isBack) {
-                tex.wrapS = THREE.RepeatWrapping;
-                tex.repeat.x = -1;
-                tex.offset.x = 1;
-              }
+              // REMOVED: Negative texture repeats - using rotation only for back faces
+              // if (isBack) {
+              //   tex.wrapS = THREE.RepeatWrapping;
+              //   tex.repeat.x = -1;
+              //   tex.offset.x = 1;
+              // }
 
               tex.needsUpdate = true;
               resolve(tex);
@@ -462,16 +474,22 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             const alphaTex = new THREE.CanvasTexture(maskCanvas);
             alphaTex.flipY = true;
             alphaTex.colorSpace = THREE.NoColorSpace;
-            if (isBack) {
-              alphaTex.wrapS = THREE.RepeatWrapping;
-              alphaTex.repeat.x = -1;
-              alphaTex.offset.x = 1;
-            }
+
+            // ADD: Disable mipmaps for binary masks
+            alphaTex.generateMipmaps = false;
+            alphaTex.minFilter = THREE.LinearFilter;
+            alphaTex.magFilter = THREE.LinearFilter;
+
+            alphaTex.wrapS = THREE.ClampToEdgeWrapping;
+            alphaTex.wrapT = THREE.ClampToEdgeWrapping;
+            // if (isBack) {
+            //   alphaTex.wrapS = THREE.RepeatWrapping;
+            //   alphaTex.repeat.x = -1;
+            //   alphaTex.offset.x = 1;
+            // }
             alphaTex.needsUpdate = true;
             layerTextures.dieCut = alphaTex;
             console.log("Die-cut mask texture created successfully");
-          } else {
-            console.warn("Failed to create die-cut mask canvas");
           }
         } else {
           console.warn(
@@ -565,11 +583,19 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
             const alphaTex = new THREE.CanvasTexture(maskCanvas);
             alphaTex.flipY = true;
             alphaTex.colorSpace = THREE.NoColorSpace;
-            if (isBack) {
-              alphaTex.wrapS = THREE.RepeatWrapping;
-              alphaTex.repeat.x = -1;
-              alphaTex.offset.x = 1;
-            }
+
+            // ADD: Disable mipmaps for binary masks
+            alphaTex.generateMipmaps = false;
+            alphaTex.minFilter = THREE.LinearFilter;
+            alphaTex.magFilter = THREE.LinearFilter;
+
+            alphaTex.wrapS = THREE.ClampToEdgeWrapping;
+            alphaTex.wrapT = THREE.ClampToEdgeWrapping;
+            // if (isBack) {
+            //   alphaTex.wrapS = THREE.RepeatWrapping;
+            //   alphaTex.repeat.x = -1;
+            //   alphaTex.offset.x = 1;
+            // }
             alphaTex.needsUpdate = true;
             sideTextures.dieCut = alphaTex;
           }
@@ -757,7 +783,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
 
   const hasDie = !!alphaFront || !!alphaBack;
   const hasUsableAlbedo = !!textures.front?.albedo || !!textures.back?.albedo;
-  const hideBase = false;
+  const hideBase = !!alphaFront;
 
   // Auto rotation
   useFrame((state, delta) => {
@@ -826,7 +852,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               renderOrder++,
               {
                 alphaMap: uvLayer.maskTex,
-                alphaTest: 0.1,
+                alphaTest: 0.5,
                 clearcoat: 1.0,
                 clearcoatRoughness: 0.0,
                 roughness: 0.02,
@@ -852,7 +878,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
                 __ink: true,
                 map: foilLayer.colorTex,
                 alphaMap: foilLayer.maskTex,
-                alphaTest: 0.1,
+                alphaTest: 0.5,
                 toneMapped: false,
               }
             )
@@ -871,7 +897,7 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               renderOrder++,
               {
                 alphaMap: foilLayer.maskTex,
-                alphaTest: 0.1,
+                alphaTest: 0.5,
                 metalness: 0.9,
                 roughness: 0.15,
                 color: new THREE.Color(0xffffff),
@@ -921,9 +947,29 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
       {/* Base Card */}
       {!hideBase && <BaseCard dimensions={cardDimensions} />}
 
+      {/* Die-Cut Front Plane (ALWAYS render when die-cut exists) */}
+      {alphaFront && (
+        <Plane
+          args={[cardDimensions.width, cardDimensions.height]}
+          position={[0, 0, cardDimensions.thickness / 2 + 0.0001]}
+          renderOrder={4}
+        >
+          <meshBasicMaterial
+            map={textures.front?.albedo || null}
+            alphaMap={alphaFront}
+            transparent={true}
+            alphaTest={0.5}             // binary mask threshold
+            depthWrite={false}          // avoid z-buffer artifacts
+            side={THREE.DoubleSide}
+            color={textures.front?.albedo ? undefined : new THREE.Color(0xf0f0f0)}
+          />
+        </Plane>
+      )}
+
       {/* Albedo Planes */}
-      {/* Multi-layer FRONT albedos */}
-      {Array.isArray(textures.frontLayers) &&
+      {/* Multi-layer FRONT albedos (only if no die-cut present) */}
+      {!alphaFront &&
+        Array.isArray(textures.frontLayers) &&
         textures.frontLayers.length > 0 &&
         hasFrontLayerAlbedo && (
           <>
@@ -942,10 +988,9 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
                     map={L.albedo}
                     transparent={hasDieCut}
                     alphaMap={hasDieCut ? L.dieCut : undefined}
-                    alphaTest={hasDieCut ? 0.1 : 0.0}
+                    alphaTest={hasDieCut ? 0.5 : 0.0} // FIXED: 0.5 for binary
                     depthWrite={!hasDieCut}
                     side={THREE.DoubleSide}
-                    toneMapped={false}
                   />
                 </Plane>
               );
@@ -964,19 +1009,19 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
           <meshBasicMaterial
             map={textures.back.albedo}
             alphaMap={alphaBack || undefined}
-            transparent={true}
-            alphaTest={0.1}
+            transparent={!!alphaBack}
+            alphaTest={0.5} // FIXED: Consistent 0.5 threshold
             depthWrite={false}
             side={THREE.DoubleSide}
-            toneMapped={false}
           />
         </Plane>
       )}
 
-      {/* FALLBACK: single FRONT albedo */}
-      {(!Array.isArray(textures.frontLayers) ||
-        textures.frontLayers.length === 0 ||
-        !hasFrontLayerAlbedo) &&
+      {/* FALLBACK: single FRONT albedo (only if no die-cut) */}
+      {!alphaFront &&
+        (!Array.isArray(textures.frontLayers) ||
+          textures.frontLayers.length === 0 ||
+          !hasFrontLayerAlbedo) &&
         textures.front?.albedo?.image && (
           <Plane
             args={[cardDimensions.width, cardDimensions.height]}
@@ -987,10 +1032,9 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
               map={textures.front.albedo}
               alphaMap={alphaFront || undefined}
               transparent={!!alphaFront}
-              alphaTest={alphaFront ? 0.1 : 0.0}
+              alphaTest={alphaFront ? 0.5 : 0.0} // FIXED: 0.5 for binary
               depthWrite={!alphaFront}
               side={THREE.DoubleSide}
-              toneMapped={false}
             />
           </Plane>
         )}
@@ -1067,23 +1111,20 @@ function CardModel({ cardData, autoRotate = false, showEffects = true }) {
           Loading textures... {Math.round(loadingProgress * 100)}%
         </Text>
       )}
+      
 
       {/* Debug Info */}
-      {import.meta.env.DEV && alphaFront && (
+      {import.meta.env.DEV && SHOW_DEBUG_MASK && alphaFront && (
         <>
           <Plane
             args={[cardDimensions.width, cardDimensions.height]}
-            position={[0, 0.02, cardDimensions.thickness / 2 + 0.001]}
-            renderOrder={100}
+            position={[0, 0, cardDimensions.thickness / 2 - 0.001]} // behind front plane
+            renderOrder={0}
           >
-            <meshBasicMaterial
-              map={alphaFront}
-              transparent={false}
-              side={THREE.DoubleSide}
-            />
+            <meshBasicMaterial map={alphaFront} transparent={true} opacity={0.6} />
           </Plane>
           <Text
-            position={[0, 0.03, cardDimensions.thickness / 2 + 0.001]}
+            position={[0, 0.03, cardDimensions.thickness / 2 - 0.001]}
             fontSize={0.003}
             color="#ff0000"
             anchorX="center"
