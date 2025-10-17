@@ -77,151 +77,6 @@
     );
   }
 
-  /**
-   * Check if layer/item name indicates an effect layer (NOT print/albedo).
-   * Used to filter out effect layers when duplicating print items.
-   * 
-   * CRITICAL: This must NOT match items inside effect layers.
-   * It should only match the layer NAME ITSELF when it contains effect tokens.
-   * 
-   * Strategy: Don't check individual items — only check layer/sublayer names.
-   * When walking the tree, if a LAYER is an effect layer, skip its entire subtree.
-   */
-  function isEffectLayerName(name) {
-    var s = String(name || "").toLowerCase();
-    
-    // Match patterns like: front_layer_0_foil_hot_pink, back_layer_0_spot_uv, etc.
-    // These are LAYER names, not item names.
-    
-    // Foil patterns
-    if (/_foil($|_)/.test(s)) return true; // front_layer_0_foil, front_layer_0_foil_hot_pink
-    if (s.indexOf("_foil_") >= 0) return true; // any _foil_ variant
-    
-    // UV patterns  
-    if (/_spot_uv($|_)/.test(s)) return true;
-    if (/_uv($|_)/.test(s)) return true;
-    if (s.indexOf("spot_uv") >= 0) return true;
-    if (s.indexOf("spot-uv") >= 0) return true;
-    
-    // Emboss/Deboss
-    if (/_emboss($|_)/.test(s)) return true;
-    if (/_deboss($|_)/.test(s)) return true;
-    if (s.indexOf("emboss") >= 0) return true;
-    if (s.indexOf("deboss") >= 0) return true;
-    
-    // Die-cut patterns
-    if (/_die_cut($|_)/.test(s)) return true;
-    if (/_die($|_)/.test(s)) return true;
-    if (s.indexOf("die_cut") >= 0) return true;
-    if (s.indexOf("die-cut") >= 0) return true;
-    if (s.indexOf("diecut") >= 0) return true;
-    if (s.indexOf("laser_cut") >= 0) return true;
-    if (s.indexOf("laser-cut") >= 0) return true;
-    if (s.indexOf("cutline") >= 0) return true;
-    if (s.indexOf("cut_line") >= 0) return true;
-    
-    return false;
-  }
-
-  /**
-   * Duplicate print (albedo) items for a card into targetLayer.
-   * Excludes items from effect layers (foil/uv/emboss/die).
-   * @returns {number} count of duplicated items
-   */
-  function duplicatePrintItemsInto(
-    doc,
-    targetLayer,
-    cardLeft,
-    cardTop,
-    cardRight,
-    cardBottom
-  ) {
-    var cardBounds = [cardLeft, cardTop, cardRight, cardBottom];
-    var dup = 0;
-    $.writeln("[duplicatePrintItemsInto] Starting print duplication for cardBounds: " + cardBounds);
-
-    // Walk all layers; skip if it's a dedicated effect layer
-    // Strategy: A layer is "effect" if its NAME (not ancestry) indicates it's ONLY for effects.
-    // Example: "front_layer_0_foil_hot_pink" → effect layer (skip entirely)
-    // Example: "front_layer_0_print" → print layer (process all items)
-    // Example: "front_layer_0" → generic layer (process all non-effect items)
-    
-    for (var li = 0; li < doc.layers.length; li++) {
-      var layer = doc.layers[li];
-      
-      // Check if this top-level layer is EXPLICITLY an effect layer
-      var layerIsEffect = isEffectLayerName(layer.name);
-      
-      $.writeln("[duplicatePrintItemsInto] Processing layer '" + (layer.name || "(unnamed)") + "', isEffect=" + layerIsEffect);
-      
-      var stack = [{ node: layer, isEffect: layerIsEffect }];
-
-      while (stack.length) {
-        var cur = stack.pop();
-        var node = cur.node;
-        
-        // Simply inherit the effect flag from the top-level layer
-        // Do NOT re-evaluate on sublayers or groups
-        var effectCtx = cur.isEffect;
-        
-        if (effectCtx) {
-          $.writeln("[duplicatePrintItemsInto] Skipping effect layer/subtree: " + (node.name || "(unnamed)"));
-          // Continue to traverse to count skipped layers, but don't duplicate items
-        }
-
-        // Enqueue sublayers
-        if (node.layers) {
-          for (var k = 0; k < node.layers.length; k++) {
-            stack.push({ node: node.layers[k], isEffect: effectCtx });
-          }
-        }
-
-        // Process pageItems
-        if (node.pageItems) {
-          for (var j = 0; j < node.pageItems.length; j++) {
-            var it = node.pageItems[j];
-            
-            // If this is a GroupItem, recurse into it (inherit effectCtx, don't re-check)
-            if (it.typename === "GroupItem") {
-              stack.push({ node: it, isEffect: effectCtx });
-              continue;
-            }
-            
-            // Skip if we're inside an effect layer (inherited from ancestor)
-            if (effectCtx) continue;
-
-            // Only duplicate visible, unlocked items
-            var isVis = true, isLocked = false;
-            try { isVis = it.hidden ? false : true; } catch (e) {}
-            try { isLocked = it.locked ? true : false; } catch (e) {}
-            if (!isVis || isLocked) continue;
-
-            // Check overlap
-            var b = null;
-            try { b = it.geometricBounds; } catch (e) {}
-            
-            if (!normalizedOverlap(b, cardBounds)) {
-              // $.writeln("[duplicatePrintItemsInto] Item outside bounds: " + (it.name || it.typename));
-              continue;
-            }
-
-            // Duplicate
-            try {
-              var d = it.duplicate(targetLayer, ElementPlacement.PLACEATBEGINNING);
-              try { d.hidden = false; } catch (e) {}
-              try { d.locked = false; } catch (e) {}
-              dup++;
-              $.writeln("[duplicatePrintItemsInto] ✓ Duplicated " + it.typename + " from layer: " + (node.name || "(unnamed)"));
-            } catch (e) {
-              $.writeln("[duplicatePrintItemsInto] ✗ ERROR duplicating item: " + e);
-            }
-          }
-        }
-      }
-    }
-    $.writeln("[duplicatePrintItemsInto] Total print items duplicated: " + dup);
-    return dup;
-  }
 
   function duplicateDieItemsInto(
     doc,
@@ -560,6 +415,40 @@
   // ---------- tiny utils ----------
   function _isArray(a) {
     return Object.prototype.toString.call(a) === "[object Array]";
+  }
+  
+  // Layer visibility helpers for clean isolation
+  function snapshotLayerVisibility(doc) {
+    var saved = [];
+    for (var i = 0; i < doc.layers.length; i++) {
+      var L = doc.layers[i];
+      saved.push({ layer: L, vis: !!L.visible, lock: !!L.locked });
+    }
+    return saved;
+  }
+  
+  function hideAllLayersExcept(doc, targetLayer) {
+    for (var i = 0; i < doc.layers.length; i++) {
+      var L = doc.layers[i];
+      try {
+        if (L.locked) L.locked = false;
+      } catch (e) {}
+      try {
+        L.visible = (L === targetLayer);
+      } catch (e) {}
+    }
+  }
+  
+  function restoreLayerVisibility(saved) {
+    for (var i = 0; i < saved.length; i++) {
+      var s = saved[i];
+      try {
+        s.layer.visible = s.vis;
+      } catch (e) {}
+      try {
+        s.layer.locked = s.lock;
+      } catch (e) {}
+    }
   }
   function _esc(s) {
     return String(s)
@@ -1292,7 +1181,6 @@
   }
 
   // Show ONLY this card's non-effect top layers (exclude foil/uv/emboss/deboss/die)
-  // NOTE: This function is no longer used for albedo export (replaced by duplication-based isolation)
   function withCardNonEffects(pref, fn) {
     var exclude = [
       "_foil",
@@ -1311,19 +1199,23 @@
       "_cut_line",
     ];
     var changed = [];
+    var prefLower = pref.toLowerCase(); // FIX: lowercase the prefix once
+    
     try {
+      $.writeln("[ALBEDO DEBUG] Processing layers for prefix: " + prefLower);
       for (var i = 0; i < doc.layers.length; i++) {
         var L = doc.layers[i];
         if (!L) continue;
         var nm = (L.name || "").toLowerCase();
-        var isCard = nm.indexOf(pref) >= 0;
+        var isCard = nm.indexOf(prefLower) >= 0; // FIX: use lowercased prefix
         var isExcluded = false;
         for (var e = 0; e < exclude.length; e++) {
-          if (nm.indexOf(pref + exclude[e]) >= 0) {
+          if (nm.indexOf(prefLower + exclude[e]) >= 0) { // FIX: use lowercased prefix
             isExcluded = true;
             break;
           }
         }
+        $.writeln("[ALBEDO DEBUG] Layer '" + L.name + "': isCard=" + isCard + ", isExcluded=" + isExcluded);
         var vis0 = !!L.visible,
           lock0 = !!L.locked;
         changed.push({ L: L, vis0: vis0, lock0: lock0 });
@@ -1332,6 +1224,7 @@
         } catch (_) {}
         try {
           if (isCard && !isExcluded) {
+            $.writeln("[ALBEDO DEBUG] Making layer '" + L.name + "' visible");
             setVisibleDeep(L, true);
           } else {
             try {
@@ -1373,13 +1266,17 @@
     var pref = cardPrefix(sideName, Number(idx)); // e.g. "front_layer_0"
 
     // ---- Albedo (print) via visibility toggling (proven to work) ----
+    $.writeln("[ALBEDO DEBUG] Starting albedo export for " + pref);
+    $.writeln("[ALBEDO DEBUG] Card bounds: " + leftPt + "," + topPt + "," + rightPt + "," + bottomPt);
     withCardNonEffects(pref, function () {
       var AB = createTempArtboard(doc, leftPt, topPt, rightPt, bottomPt);
       try {
         doc.artboards.setActiveArtboardIndex(AB.index);
         app.redraw();
+        $.writeln("[ALBEDO DEBUG] About to export albedo PNG");
         pngExport(doc, absPath(pref + "_albedo.png"), scalePercent, true, true);
         rel.albedo = relPath(pref + "_albedo.png");
+        $.writeln("[ALBEDO DEBUG] Albedo export completed");
       } finally {
         AB.remove();
       }
@@ -1392,6 +1289,8 @@
       var iso = ensureLayer(doc, "__EXPORT_ISO__");
       try {
         // Duplicate all foil items (nested-safe) for this card
+        $.writeln("[FOIL DEBUG] Starting foil duplication for " + pref);
+        $.writeln("[FOIL DEBUG] Card bounds: " + leftPt + "," + topPt + "," + rightPt + "," + bottomPt);
         var dup = duplicateFinishItemsInto(
           doc,
           iso,
@@ -1401,6 +1300,7 @@
           rightPt,
           bottomPt
         );
+        $.writeln("[FOIL DEBUG] Duplicated " + dup + " foil items");
 
         // Temp artboard for exact clipping
         var AB = createTempArtboard(doc, leftPt, topPt, rightPt, bottomPt);
@@ -1422,11 +1322,16 @@
           rel.foil_color = relPath(pref + "_foil_color.png");
         }
 
-        // B) MASK (white)
+        // B) MASK (white) - Hide all layers except isolation layer for clean mask
+        var saved = snapshotLayerVisibility(doc);
+        hideAllLayersExcept(doc, iso);
+        
         normalizeSelectionToWhiteMask();
         pngExport(doc, absPath(pref + "_foil.png"), scalePercent, true, true);
         rel.foil = relPath(pref + "_foil.png");
 
+        // Restore layer visibility
+        restoreLayerVisibility(saved);
         AB.remove();
       } finally {
         try {

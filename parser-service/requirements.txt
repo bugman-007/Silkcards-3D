@@ -1,0 +1,15 @@
+# Parser Service Dependencies
+
+# Web Framework (for API mode)
+Flask==3.0.0
+Werkzeug==3.0.1
+
+# Image Processing
+Pillow==10.1.0
+
+# Utilities
+numpy==1.24.3
+
+# Optional: For advanced logging/monitoring
+# python-json-logger==2.0.7
+
