@@ -10,8 +10,8 @@ if exist venv\Scripts\activate.bat (
     call venv\Scripts\activate.bat
 )
 
-REM Run health check
-python -m src.app health
+REM Run health check using the standalone script
+python health_check.py
 
 pause
 

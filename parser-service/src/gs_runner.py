@@ -7,10 +7,14 @@ import os
 import subprocess
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from PIL import Image
 
-from . import config
+# Handle both relative and absolute imports
+try:
+    from . import config
+except ImportError:
+    import config
 
 logger = logging.getLogger("parser.ghostscript")
 

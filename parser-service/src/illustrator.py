@@ -10,7 +10,11 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from . import config
+# Handle both relative and absolute imports
+try:
+    from . import config
+except ImportError:
+    import config
 
 logger = logging.getLogger("parser.illustrator")
 
@@ -174,16 +178,48 @@ class IllustratorRunner:
                 raise
         
         # Wait for sentinel file (JSX may take time to write it)
-        sentinel_timeout = 30  # Additional 30s for sentinel
-        if not self._wait_for_file(done_sentinel, sentinel_timeout):
-            # Check for error sentinel
-            if error_sentinel.exists():
-                error_data = self._read_error_sentinel(error_sentinel)
-                raise IllustratorError(
-                    f"JSX reported error: {error_data.get('error', {}).get('message', 'Unknown error')}"
-                )
-            
-            raise IllustratorError("JSX did not write completion sentinel")
+        sentinel_timeout = 120  # Extended to 120s for large files
+        sentinel_found = False
+        error_occurred = None
+        
+        logger.info(f"Waiting for completion sentinel (timeout: {sentinel_timeout}s)")
+        logger.info(f"Looking for: {done_sentinel}")
+        logger.info(f"Or error: {error_sentinel}")
+        
+        try:
+            if not self._wait_for_file(done_sentinel, sentinel_timeout):
+                # Check for error sentinel
+                if error_sentinel.exists():
+                    error_data = self._read_error_sentinel(error_sentinel)
+                    error_occurred = IllustratorError(
+                        f"JSX reported error: {error_data.get('error', {}).get('message', 'Unknown error')}"
+                    )
+                else:
+                    # Check for emergency error in temp folder
+                    import tempfile
+                    temp_error_path = Path(tempfile.gettempdir()) / "parser_job_config_error.txt"
+                    if temp_error_path.exists():
+                        try:
+                            emergency_error = temp_error_path.read_text(encoding='utf-8')
+                            logger.error(f"Emergency error found in temp: {emergency_error}")
+                            temp_error_path.unlink()  # Clean up
+                            error_occurred = IllustratorError(f"JSX config error: {emergency_error}")
+                        except Exception as e:
+                            logger.warning(f"Could not read emergency error: {e}")
+                            error_occurred = IllustratorError("JSX did not write completion sentinel")
+                    else:
+                        error_occurred = IllustratorError("JSX did not write completion sentinel")
+            else:
+                sentinel_found = True
+        finally:
+            # Always kill Illustrator after job completes to prevent hanging
+            logger.info("Cleaning up: killing Illustrator process")
+            self.kill_illustrator()
+            time.sleep(2)  # Give time for cleanup
+        
+        # Raise error if one occurred
+        if error_occurred:
+            raise error_occurred
         
         elapsed = time.time() - start_time
         logger.info(f"Job completed in {elapsed:.2f}s")

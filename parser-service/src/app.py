@@ -12,7 +12,7 @@ import logging
 import traceback
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -146,44 +146,64 @@ class ParserJob:
             raise
     
     def _run_ghostscript_phase(self):
-        """Run Ghostscript plate extraction phase."""
-        pdf_path = self.working_dir / f"{self.job_id}.pdf"
+        """Run Ghostscript plate extraction phase (PER-SIDE)."""
+        logger.info(f"[{self.job_id}] === Starting Ghostscript Phase (Per-Side) ===")
         
-        if not pdf_path.exists():
-            raise RuntimeError("PDF not found for plate extraction")
+        # Get sides from scratch data
+        scratch_path = self.working_dir / f"{self.job_id}_scratch.json"
+        scratch_data = report.load_jsx_scratch_json(scratch_path)
+        
+        if not scratch_data or "sides" not in scratch_data:
+            logger.warning(f"[{self.job_id}] No scratch data, falling back to default sides")
+            sides_to_process = [{"side": "front", "index": 0, "finishes": []}, 
+                               {"side": "back", "index": 0, "finishes": []}]
+        else:
+            sides_to_process = scratch_data["sides"]
+        
+        all_plates_detected = []
         
         try:
-            # Get expected finishes from scratch data (if available)
-            expected_finishes = self._get_expected_finishes()
+            # Process each side separately
+            for side_info in sides_to_process:
+                side = side_info["side"]  # "front" or "back"
+                side_index = side_info.get("index", 0)
+                finishes = side_info.get("finishes", [])
+                
+                logger.info(f"[{self.job_id}] --- Processing side: {side} ---")
+                logger.info(f"[{self.job_id}] Expected finishes: {finishes}")
+                
+                # Find side PDF
+                side_pdf = self.working_dir / f"{self.job_id}_{side}_layer_{side_index}.pdf"
+                
+                if not side_pdf.exists():
+                    logger.warning(f"[{self.job_id}] Side PDF not found: {side_pdf}")
+                    continue
+                
+                logger.info(f"[{self.job_id}] Side PDF exists: {side_pdf}")
+                
+                # Extract plates for THIS side
+                result = gs_runner.extract_and_convert_plates(
+                    side_pdf,
+                    self.working_dir,
+                    self.job_id,
+                    self._build_expected_finishes_dict(finishes)
+                )
+                
+                plates_detected = result.get("plates_detected", [])
+                logger.info(f"[{self.job_id}] Plates detected for {side}: {plates_detected}")
+                all_plates_detected.extend(plates_detected)
+                
+                # Move converted plates to results with side prefix
+                converted = result.get("converted", {})
+                self._move_side_plates_to_results(converted, side, side_index)
             
-            # Extract and convert plates
-            result = gs_runner.extract_and_convert_plates(
-                pdf_path,
-                self.working_dir,
-                self.job_id,
-                expected_finishes
-            )
-            
-            # Update report with plates detected
-            plates_detected = result.get("plates_detected", [])
-            self.report_builder.set_plates_detected(plates_detected)
+            # Update report with all plates
+            self.report_builder.set_plates_detected(list(set(all_plates_detected)))
             
             # Add diagnostic about DPI
             self.report_builder.add_info("PLATE_DPI", str(config.PLATE_DPI))
             
-            # Check for errors
-            errors = result.get("errors", [])
-            if errors:
-                for error_code in errors:
-                    error_msg = config.ERROR_CODES.get(error_code, "Unknown error")
-                    self._add_error(error_code, error_msg)
-                raise RuntimeError(f"Plate extraction errors: {errors}")
-            
-            # Move converted plates to results
-            converted = result.get("converted", {})
-            self._move_plates_to_results(converted)
-            
-            # Move albedo PNGs to results
+            # Move albedo PNGs to results (already have side prefix from JSX)
             self._move_albedo_to_results()
             
             logger.info(f"[{self.job_id}] Ghostscript phase completed")
@@ -290,34 +310,64 @@ class ParserJob:
         
         return expected
     
-    def _move_plates_to_results(self, converted: Dict[str, Path]):
+    def _build_expected_finishes_dict(self, finishes: List[str]) -> Optional[Dict[str, bool]]:
+        """Build expected finishes dict from finish list."""
+        if not finishes:
+            return None
+        
+        return {
+            "UV": "uv" in finishes or "spot_uv" in finishes,
+            "FOIL": "foil" in finishes,
+            "EMBOSS": "emboss" in finishes,
+            "DIE": "diecut_mask" in finishes or "die" in finishes
+        }
+    
+    def _move_side_plates_to_results(self, converted: Dict[str, Path], side: str, side_index: int):
         """
-        Move converted plate PNGs to results directory with proper naming.
+        Move converted plate PNGs to results directory with side prefix.
         
         Args:
             converted: Dict mapping finish type to temp PNG path
+            side: Side name ("front" or "back")
+            side_index: Side index (0, 1, etc.)
         """
+        logger.info(f"[{self.job_id}] === Moving Plates for {side} ===")
+        logger.info(f"[{self.job_id}] Converted plates: {converted}")
+        logger.info(f"[{self.job_id}] Number of plates to move: {len(converted)}")
+        
+        if not converted:
+            logger.warning(f"[{self.job_id}] No converted plates to move for {side}!")
+            return
+        
         for finish_type, temp_png in converted.items():
+            logger.info(f"[{self.job_id}] Processing plate: {finish_type} from {temp_png}")
+            
             if not temp_png.exists():
                 logger.warning(f"[{self.job_id}] Temp PNG not found: {temp_png}")
                 continue
             
-            # Determine proper filename
-            # For now, assume front_layer_0 (adjust if multi-side detection needed)
-            filename = config.get_output_filename("front", 0, finish_type)
+            # Determine proper filename with side prefix
+            filename = config.get_output_filename(side, side_index, finish_type)
             dest = self.results_dir / filename
             
             shutil.copy(temp_png, dest)
-            logger.info(f"[{self.job_id}] Moved plate: {filename}")
+            logger.info(f"[{self.job_id}] ✓ Moved plate: {filename} to {dest}")
     
     def _move_albedo_to_results(self):
         """Move albedo PNGs from working to results."""
+        logger.info(f"[{self.job_id}] === Moving Albedo PNGs to Results ===")
+        
         albedo_pngs = list(self.working_dir.glob("*_albedo.png"))
+        logger.info(f"[{self.job_id}] Found {len(albedo_pngs)} albedo PNG(s): {[p.name for p in albedo_pngs]}")
+        
+        if not albedo_pngs:
+            logger.warning(f"[{self.job_id}] No albedo PNGs found in working directory!")
+            return
         
         for albedo_png in albedo_pngs:
             dest = self.results_dir / albedo_png.name
             shutil.copy(albedo_png, dest)
-            logger.info(f"[{self.job_id}] Moved albedo: {albedo_png.name}")
+            logger.info(f"[{self.job_id}] ✓ Moved albedo: {albedo_png.name} to {dest}")
     
     def _add_error(self, code: str, message: str):
         """Add error to report."""

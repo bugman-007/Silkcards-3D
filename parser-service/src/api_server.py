@@ -13,8 +13,13 @@ from pathlib import Path
 from flask import Flask, request, jsonify, send_file, make_response
 from werkzeug.utils import safe_join
 
-import config
-from app import run_job, run_health_check
+# Handle both relative and absolute imports
+try:
+    from . import config
+    from .app import run_job, run_health_check
+except ImportError:
+    import config
+    from app import run_job, run_health_check
 
 # Single-flight lock for MVP
 JOB_LOCK = threading.Lock()

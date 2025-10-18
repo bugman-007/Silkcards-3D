@@ -8,7 +8,11 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from . import config
+# Handle both relative and absolute imports
+try:
+    from . import config
+except ImportError:
+    import config
 
 logger = logging.getLogger("parser.die_vector")
 

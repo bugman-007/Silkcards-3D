@@ -5,12 +5,79 @@
 #target illustrator
 #include "utils.jsx"
 
+// Disable dialogs to prevent blocking
+app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
+
 // Main execution function
 (function main() {
-  // Load job configuration from runtime/job.jsx
+  // Load job configuration from runtime/job.jsx at RUNTIME (not preprocessor)
+  var __JOB = null;
   try {
-    #include "../runtime/job.jsx"
+    // Get the path to runtime/job.jsx - USE .fsName to get filesystem string!
+    var scriptFile = new File($.fileName);                    // scripts/jsx/export_to_pdf.jsx
+    var jsxFolder = scriptFile.parent;                        // scripts/jsx/
+    var scriptsFolder = jsxFolder.parent;                     // scripts/
+    var runtimeJobPath = scriptsFolder.fsName + "/runtime/job.jsx";
+    
+    // Normalize path separators for cross-platform compatibility
+    runtimeJobPath = runtimeJobPath.replace(/\\/g, "/");
+    
+    $.writeln("[JSX] Script file: " + scriptFile.fsName);
+    $.writeln("[JSX] Scripts folder: " + scriptsFolder.fsName);
+    $.writeln("[JSX] Looking for job config at: " + runtimeJobPath);
+    
+    var jobFile = new File(runtimeJobPath);
+    
+    if (!jobFile.exists) {
+      $.writeln("[JSX] ERROR: Job config file not found at: " + runtimeJobPath);
+      // Write emergency error to temp folder so Python can diagnose
+      try {
+        var tempError = new File(Folder.temp.fsName + "/parser_job_config_error.txt");
+        tempError.open("w");
+        tempError.writeln("Job config file not found");
+        tempError.writeln("Expected at: " + runtimeJobPath);
+        tempError.writeln("Script location: " + scriptFile.fsName);
+        tempError.close();
+        $.writeln("[JSX] Wrote emergency error to: " + tempError.fsName);
+      } catch (tempErr) {
+        $.writeln("[JSX] Could not write temp error: " + tempErr.message);
+      }
+      throw new Error("Job config file not found at: " + runtimeJobPath);
+    }
+    
+    $.writeln("[JSX] Job config file found, reading...");
+    
+    // Read and evaluate the job config
+    jobFile.open("r");
+    var jobScript = jobFile.read();
+    jobFile.close();
+    
+    $.writeln("[JSX] Job config read, length: " + jobScript.length + " bytes");
+    
+    // Evaluate the script to load __JOB variable
+    eval(jobScript);
+    
+    if (!__JOB) {
+      throw new Error("Job config evaluated but __JOB is null");
+    }
+    
+    $.writeln("[JSX] Job config loaded successfully");
+    $.writeln("[JSX] Job ID: " + __JOB.job_id);
+    
   } catch (e) {
+    $.writeln("[JSX] FATAL: Cannot load job config: " + e.message);
+    // Write emergency error to temp folder
+    try {
+      var tempError = new File(Folder.temp.fsName + "/parser_job_config_error.txt");
+      tempError.open("w");
+      tempError.writeln("ERROR: " + e.message);
+      tempError.writeln("Line: " + (e.line || "unknown"));
+      tempError.writeln("Script: " + $.fileName);
+      tempError.close();
+    } catch (tempErr) {
+      // Ignore
+    }
+    // This will fail gracefully if __JOB is not loaded
     writeErrorAndExit("JOB_CONFIG_MISSING", "Cannot load runtime/job.jsx: " + e.message);
     return;
   }
@@ -29,6 +96,21 @@
   log("Input: " + inputPath);
   log("Output: " + outputDir);
   
+  // Write debug log
+  try {
+    var debugLog = new File(outputDir + "/" + jobId + "_jsx_debug.log");
+    debugLog.open("w");
+    debugLog.writeln("=== JSX Debug Log ===");
+    debugLog.writeln("Job ID: " + jobId);
+    debugLog.writeln("Input: " + inputPath);
+    debugLog.writeln("Output: " + outputDir);
+    debugLog.writeln("Illustrator Version: " + app.version);
+    debugLog.writeln("Script started: " + new Date());
+    debugLog.close();
+  } catch (e) {
+    log("WARNING: Could not write debug log: " + e.message);
+  }
+  
   // Open document
   var doc = openDocument(inputPath);
   if (!doc) {
@@ -36,69 +118,147 @@
     return;
   }
   
+  // Log successful open
   try {
-    // Duplicate document (never modify original)
-    var tempDoc = duplicateDocument(doc);
-    if (!tempDoc) {
-      throw new Error("Failed to duplicate document");
-    }
+    var debugLog = new File(outputDir + "/" + jobId + "_jsx_debug.log");
+    debugLog.open("a");
+    debugLog.writeln("Document opened successfully: " + doc.name);
+    debugLog.writeln("Artboards: " + doc.artboards.length);
+    debugLog.close();
+  } catch (e) {
+    // Ignore logging errors
+  }
+  
+  try {
+    // Instead of duplicating, we'll work directly with the document
+    // and close it at the end without saving
+    logToDebugFile(outputDir, jobId, "Working with document directly (no duplication needed)");
     
-    // Close original
-    doc.close(SaveOptions.DONOTSAVECHANGES);
-    doc = tempDoc;
-    
-    // Validate document has artboards
+    // Validate document has artboards FIRST
     if (!doc.artboards || doc.artboards.length === 0) {
       throw new Error("Document has no artboards");
     }
     
     log("Document opened: " + doc.artboards.length + " artboard(s)");
+    logToDebugFile(outputDir, jobId, "Validated: " + doc.artboards.length + " artboard(s)");
+    
+    // Force redraw to ensure document is ready
+    app.redraw();
+    logToDebugFile(outputDir, jobId, "Document ready for processing");
     
     // Phase 1: Detection
     log("Phase 1: Detection");
+    logToDebugFile(outputDir, jobId, "===== Phase 1: Detection =====");
     var detectionResult = detectFinishes(doc);
+    logToDebugFile(outputDir, jobId, "Detection completed. Finishes found: " + stringifySimple(detectionResult.finishesUsed));
     
     // Phase 2: Create spot swatches
     log("Phase 2: Creating spot swatches");
+    logToDebugFile(outputDir, jobId, "===== Phase 2: Creating spot swatches =====");
     createSpotSwatches(doc, detectionResult.finishesUsed);
+    logToDebugFile(outputDir, jobId, "Spot swatches created");
     
-    // Phase 3: Recolor items to spots
-    log("Phase 3: Recoloring items to spot colors");
-    recolorItemsToSpots(doc, detectionResult);
+    // Phase 3: Calculate card bounds for each side
+    log("Phase 3: Calculating card bounds per side");
+    logToDebugFile(outputDir, jobId, "===== Phase 3: Calculating card bounds =====");
+    var cardBoundsPerSide = calculateCardBoundsForAllSides(doc, detectionResult);
+    logToDebugFile(outputDir, jobId, "Card bounds calculated: " + stringifySimple(cardBoundsPerSide));
     
-    // Phase 4: Save to PDF/X
-    log("Phase 4: Saving to PDF/X");
-    var pdfPath = outputDir + "/" + jobId + ".pdf";
-    saveToPDFX(doc, pdfPath);
+    // Phase 4: Process each side separately (PER-SIDE EXPORT!)
+    log("Phase 4: Processing each side separately");
+    logToDebugFile(outputDir, jobId, "===== Phase 4: Per-Side Processing =====");
     
-    // Phase 5: Export albedo PNGs per side
-    log("Phase 5: Exporting albedo PNGs");
-    exportAlbedoPNGs(doc, outputDir, detectionResult);
+    for (var sideKey in detectionResult.sides) {
+      if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
+      
+      var sideName = sideKey.split("_")[0]; // "front" or "back"
+      var sideIndex = 0; // Always 0 for now (single layer)
+      
+      logToDebugFile(outputDir, jobId, "--- Processing side: " + sideName + " ---");
+      
+      // Get card bounds for this side
+      var cardBounds = cardBoundsPerSide[sideKey];
+      if (!cardBounds) {
+        logToDebugFile(outputDir, jobId, "No card bounds for " + sideKey + ", skipping");
+        continue;
+      }
+      
+      // 4a: Export albedo PNG at card size (BEFORE recoloring)
+      logToDebugFile(outputDir, jobId, "Exporting albedo for " + sideName + " at card size");
+      exportSideAlbedo(doc, sideName, sideIndex, cardBounds, outputDir);
+      
+      // 4b: Recolor items to spots
+      logToDebugFile(outputDir, jobId, "Recoloring items for " + sideName);
+      recolorSideItemsToSpots(doc, sideKey, detectionResult);
+      
+      // 4c: Export side PDF with card-sized artboard
+      logToDebugFile(outputDir, jobId, "Exporting PDF for " + sideName + " at card size");
+      exportSidePDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId);
+      
+      // 4d: Export die SVG at card size (if DIE present)
+      if (detectionResult.sides[sideKey].DIE && detectionResult.sides[sideKey].DIE.length > 0) {
+        logToDebugFile(outputDir, jobId, "Exporting die SVG for " + sideName);
+        exportSideDieSVG(doc, sideName, sideIndex, cardBounds, detectionResult.sides[sideKey].DIE, outputDir);
+      }
+      
+      logToDebugFile(outputDir, jobId, "Completed processing for " + sideName);
+    }
     
-    // Phase 6: Export die SVGs per side
-    log("Phase 6: Exporting die SVGs");
-    exportDieSVGs(doc, outputDir, detectionResult);
+    logToDebugFile(outputDir, jobId, "All sides processed");
     
-    // Phase 7: Write scratch JSON
-    log("Phase 7: Writing scratch JSON");
+    // Phase 5: Write scratch JSON
+    log("Phase 5: Writing scratch JSON");
+    logToDebugFile(outputDir, jobId, "===== Phase 5: Writing scratch JSON =====");
     var scratchPath = outputDir + "/" + jobId + "_scratch.json";
-    writeScratchJSON(scratchPath, doc, detectionResult);
+    writeScratchJSON(scratchPath, doc, detectionResult, cardBoundsPerSide);
+    logToDebugFile(outputDir, jobId, "Scratch JSON written");
     
     // Success
     log("Job completed successfully");
-    doc.close(SaveOptions.DONOTSAVECHANGES);
+    logToDebugFile(outputDir, jobId, "===== JOB COMPLETED SUCCESSFULLY =====");
+    
+    // Close document without saving (this is safe - doesn't modify original file)
+    try {
+      doc.close(SaveOptions.DONOTSAVECHANGES);
+      logToDebugFile(outputDir, jobId, "Document closed without saving");
+    } catch (closeErr) {
+      logToDebugFile(outputDir, jobId, "Warning: Could not close document cleanly: " + closeErr.message);
+      // Continue anyway - the important work is done
+    }
     
     // Write success sentinel
     writeSentinel(outputDir + "/" + jobId + "_jsx_done.txt", "success");
+    logToDebugFile(outputDir, jobId, "Success sentinel written");
+    logToDebugFile(outputDir, jobId, "Script completed at: " + new Date());
+    
+    // CRITICAL: Quit Illustrator so Python can continue
+    logToDebugFile(outputDir, jobId, "Quitting Illustrator...");
+    app.quit();
     
   } catch (e) {
     log("ERROR: " + e.message);
+    logToDebugFile(outputDir, jobId, "===== FATAL ERROR =====");
+    logToDebugFile(outputDir, jobId, "Error: " + e.message);
+    logToDebugFile(outputDir, jobId, "Line: " + (e.line || "unknown"));
+    logToDebugFile(outputDir, jobId, "File: " + (e.fileName || "unknown"));
+    logToDebugFile(outputDir, jobId, "Stack: " + (e.stack || "no stack trace"));
+    
+    // Try to close document
     try {
-      doc.close(SaveOptions.DONOTSAVECHANGES);
+      if (doc) {
+        doc.close(SaveOptions.DONOTSAVECHANGES);
+        logToDebugFile(outputDir, jobId, "Document closed after error");
+      }
     } catch (e2) {
-      // Ignore
+      logToDebugFile(outputDir, jobId, "Could not close document: " + e2.message);
+      // Not critical - process will clean up
     }
+    
     writeErrorAndExit("PDF_SAVE_FAILED", e.message);
+    
+    // Quit Illustrator even on error so Python can continue
+    logToDebugFile(outputDir, jobId, "Quitting Illustrator after error...");
+    app.quit();
   }
 })();
 
@@ -328,32 +488,58 @@ function createSpotSwatches(doc, finishesUsed) {
  */
 function recolorItemsToSpots(doc, detectionResult) {
   var finishTypes = ["UV", "FOIL", "EMBOSS", "DIE"];
+  var totalRecolored = 0;
+  
+  log("==== Starting Recoloring Phase ====");
   
   for (var sideKey in detectionResult.sides) {
     if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
     
     var buckets = detectionResult.sides[sideKey];
+    log("Processing side: " + sideKey);
     
     for (var i = 0; i < finishTypes.length; i++) {
       var finishType = finishTypes[i];
       var items = buckets[finishType];
       
-      if (!items || items.length === 0) continue;
+      if (!items || items.length === 0) {
+        log("  " + finishType + ": 0 items (skipping)");
+        continue;
+      }
       
-      log("Recoloring " + items.length + " items to " + finishType + " (" + sideKey + ")");
+      log("  " + finishType + ": " + items.length + " items to recolor");
       
       // Get spot swatch
       var swatch = findSwatch(doc, finishType);
       if (!swatch) {
-        log("WARNING: Swatch not found for " + finishType);
+        log("  ❌ ERROR: Swatch not found for " + finishType);
+        log("  CRITICAL: Cannot recolor without spot swatch!");
         continue;
       }
       
-      // Recolor each item
+      log("  ✓ Found spot swatch: " + swatch.name);
+      
+      // Recolor each item recursively
+      var successCount = 0;
       for (var j = 0; j < items.length; j++) {
-        recolorItemToSpot(items[j], swatch);
+        var recoloredCount = recolorItemToSpotRecursive(items[j], swatch);
+        if (recoloredCount > 0) {
+          successCount += recoloredCount;
+        }
       }
+      
+      log("  ✓ Recolored " + successCount + " sub-items from " + items.length + " top-level items to " + finishType);
+      totalRecolored += successCount;
     }
+  }
+  
+  log("==== Recoloring Complete ====");
+  log("Total sub-items recolored: " + totalRecolored);
+  
+  if (totalRecolored === 0) {
+    log("⚠️  WARNING: NO items were recolored! PDF will have NO spot plates!");
+    log("⚠️  This means detection found items but recoloring failed.");
+    log("⚠️  Check: 1) Spot swatch creation, 2) Item types, 3) Locked/hidden items");
   }
 }
 
@@ -378,25 +564,271 @@ function findSwatch(doc, name) {
 }
 
 /**
- * Recolor a single item to a spot color at 100% tint.
+ * Recursively recolor an item and all its children to a spot color.
+ * Returns the number of atomic items successfully recolored.
+ * 
+ * This handles:
+ * - GroupItems (recurse into children)
+ * - CompoundPathItems (recolor all pathItems)
+ * - TextFrames (recolor characters)
+ * - PathItems, RasterItems, etc. (direct recolor)
  */
-function recolorItemToSpot(item, spot) {
+function recolorItemToSpotRecursive(item, spot) {
+  var count = 0;
+  
+  try {
+    var itemType = item.typename;
+    
+    // Handle GroupItems - recurse into children
+    if (itemType === "GroupItem") {
+      for (var i = 0; i < item.pageItems.length; i++) {
+        count += recolorItemToSpotRecursive(item.pageItems[i], spot);
+      }
+      return count;
+    }
+    
+    // Handle CompoundPathItems - recurse into pathItems
+    if (itemType === "CompoundPathItem") {
+      for (var j = 0; j < item.pathItems.length; j++) {
+        count += recolorItemToSpotRecursive(item.pathItems[j], spot);
+      }
+      return count;
+    }
+    
+    // Handle TextFrames - recolor text characters
+    if (itemType === "TextFrame") {
+      return recolorTextFrame(item, spot);
+    }
+    
+    // Handle atomic items (PathItem, RasterItem, etc.)
+    return recolorAtomicItem(item, spot);
+    
+  } catch (e) {
+    log("    WARNING: Cannot process item type " + (itemType || "unknown") + ": " + e.message);
+    return 0;
+  }
+}
+
+/**
+ * Recolor an atomic item (PathItem, RasterItem, PluginItem, etc.)
+ */
+function recolorAtomicItem(item, spot) {
   try {
     var spotColor = new SpotColor();
     spotColor.spot = spot;
     spotColor.tint = 100;
     
+    var recolored = false;
+    
     // Set fill if present
     if (item.filled) {
       item.fillColor = spotColor;
+      recolored = true;
     }
     
     // Set stroke if present
     if (item.stroked) {
       item.strokeColor = spotColor;
+      recolored = true;
     }
+    
+    return recolored ? 1 : 0;
   } catch (e) {
-    log("WARNING: Cannot recolor item: " + e.message);
+    log("    WARNING: Cannot recolor atomic item: " + e.message);
+    return 0;
+  }
+}
+
+/**
+ * Recolor text frame to spot color.
+ * Text frames need special handling.
+ */
+function recolorTextFrame(textFrame, spot) {
+  try {
+    var spotColor = new SpotColor();
+    spotColor.spot = spot;
+    spotColor.tint = 100;
+    
+    // Try to recolor all text characters
+    if (textFrame.textRange && textFrame.textRange.characterAttributes) {
+      textFrame.textRange.characterAttributes.fillColor = spotColor;
+      textFrame.textRange.characterAttributes.strokeColor = spotColor;
+      return 1;
+    }
+    
+    return 0;
+  } catch (e) {
+    log("    WARNING: Cannot recolor text frame: " + e.message);
+    return 0;
+  }
+}
+
+// ============================================================================
+// Card Bounds Calculation (NEW - for per-side export)
+// ============================================================================
+
+/**
+ * Calculate card-sized bounds for all sides.
+ * Returns object like: {front_layer_0: [x0,y0,x1,y1], back_layer_0: [...]}
+ */
+function calculateCardBoundsForAllSides(doc, detectionResult) {
+  var boundsPerSide = {};
+  
+  for (var sideKey in detectionResult.sides) {
+    if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
+    
+    var buckets = detectionResult.sides[sideKey];
+    var allItems = [];
+    
+    // Priority 1: Use DIE bounds if available (most accurate for card size)
+    if (buckets.DIE && buckets.DIE.length > 0) {
+      allItems = buckets.DIE;
+      log("Using DIE bounds for " + sideKey);
+    } else {
+      // Priority 2: Use all content bounds
+      for (var finish in buckets) {
+        if (buckets[finish] && buckets[finish].length > 0) {
+          allItems = allItems.concat(buckets[finish]);
+        }
+      }
+      log("Using content bounds for " + sideKey + " (" + allItems.length + " items)");
+    }
+    
+    if (allItems.length > 0) {
+      boundsPerSide[sideKey] = getItemsBounds(allItems);
+    }
+  }
+  
+  return boundsPerSide;
+}
+
+/**
+ * Calculate union bounding box of multiple items.
+ * Returns [left, top, right, bottom] in points.
+ */
+function getItemsBounds(items) {
+  if (!items || items.length === 0) return null;
+  
+  var left = 999999;
+  var top = -999999;
+  var right = -999999;
+  var bottom = 999999;
+  
+  for (var i = 0; i < items.length; i++) {
+    try {
+      var bounds = items[i].geometricBounds; // [left, top, right, bottom]
+      if (bounds[0] < left) left = bounds[0];
+      if (bounds[1] > top) top = bounds[1];
+      if (bounds[2] > right) right = bounds[2];
+      if (bounds[3] < bottom) bottom = bounds[3];
+    } catch (e) {
+      // Skip items that can't provide bounds
+    }
+  }
+  
+  return [left, top, right, bottom];
+}
+
+// ============================================================================
+// Per-Side Export Functions (NEW)
+// ============================================================================
+
+/**
+ * Export albedo PNG for one side at card size (before recoloring).
+ */
+function exportSideAlbedo(doc, sideName, sideIndex, cardBounds, outputDir) {
+  var filename = sideName + "_layer_" + sideIndex + "_albedo.png";
+  var outputPath = outputDir + "/" + filename;
+  
+  log("Exporting card-sized albedo: " + filename);
+  
+  // Create temp artboard at card bounds
+  var tempAB = doc.artboards.add(cardBounds);
+  var tempABIndex = doc.artboards.length - 1;
+  
+  try {
+    // Set as active
+    doc.artboards.setActiveArtboardIndex(tempABIndex);
+    
+    // Export PNG clipped to this artboard
+    exportArtboardToPNG(doc, tempABIndex, outputPath, 300);
+    
+  } finally {
+    // Remove temp artboard
+    doc.artboards.remove(tempABIndex);
+  }
+}
+
+/**
+ * Recolor items for ONE side only.
+ */
+function recolorSideItemsToSpots(doc, sideKey, detectionResult) {
+  var buckets = detectionResult.sides[sideKey];
+  var finishTypes = ["UV", "FOIL", "EMBOSS", "DIE"];
+  var totalRecolored = 0;
+  
+  for (var i = 0; i < finishTypes.length; i++) {
+    var finishType = finishTypes[i];
+    var items = buckets[finishType];
+    
+    if (!items || items.length === 0) continue;
+    
+    var swatch = findSwatch(doc, finishType);
+    if (!swatch) {
+      log("  WARNING: Swatch not found for " + finishType);
+      continue;
+    }
+    
+    // Recolor each item recursively
+    for (var j = 0; j < items.length; j++) {
+      totalRecolored += recolorItemToSpotRecursive(items[j], swatch);
+    }
+  }
+  
+  log("  Recolored " + totalRecolored + " sub-items for " + sideKey);
+  return totalRecolored;
+}
+
+/**
+ * Export PDF for one side with card-sized artboard and spot colors.
+ */
+function exportSidePDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId) {
+  var filename = jobId + "_" + sideName + "_layer_" + sideIndex + ".pdf";
+  var pdfPath = outputDir + "/" + filename;
+  
+  log("Exporting card-sized PDF: " + filename);
+  
+  // Create temp artboard at card bounds
+  var tempAB = doc.artboards.add(cardBounds);
+  var tempABIndex = doc.artboards.length - 1;
+  
+  try {
+    // Set as active
+    doc.artboards.setActiveArtboardIndex(tempABIndex);
+    
+    // Save PDF with spots preserved (will only include visible content on this artboard)
+    saveToPDFX(doc, pdfPath);
+    
+  } finally {
+    // Remove temp artboard
+    doc.artboards.remove(tempABIndex);
+  }
+}
+
+/**
+ * Export die SVG for one side at card size.
+ */
+function exportSideDieSVG(doc, sideName, sideIndex, cardBounds, dieItems, outputDir) {
+  var filename = sideName + "_layer_" + sideIndex + "_diecut.svg";
+  var outputPath = outputDir + "/" + filename;
+  
+  log("Exporting card-sized die SVG: " + filename);
+  
+  // Use existing die export function
+  try {
+    exportDieSVG(doc, dieItems, outputPath);
+  } catch (e) {
+    log("WARNING: Cannot export die SVG: " + e.message);
   }
 }
 
@@ -405,23 +837,40 @@ function recolorItemToSpot(item, spot) {
 // ============================================================================
 
 /**
- * Save document to PDF/X-4 with spot colors preserved.
+ * Save document to PDF with spot colors preserved.
  */
 function saveToPDFX(doc, pdfPath) {
   var file = new File(pdfPath);
   
-  // PDF save options
+  // PDF save options - using PDF 1.4 (Acrobat 5) for maximum compatibility
   var pdfOptions = new PDFSaveOptions();
-  pdfOptions.compatibility = PDFCompatibility.PDFX42010;
-  pdfOptions.preserveEditability = false;
-  pdfOptions.viewAfterSaving = false;
+  
+  // Use ACROBAT5 (PDF 1.4) which is universally supported and preserves spot colors
+  pdfOptions.compatibility = PDFCompatibility.ACROBAT5;
+  
+  // Preserve spot colors - do NOT convert to process
   pdfOptions.colorConversionID = ColorConversion.None;
   pdfOptions.colorDestinationID = ColorDestination.None;
-  pdfOptions.pdfXStandard = PDFXStandard.PDFX42010;
   
-  doc.saveAs(file, pdfOptions);
+  // Don't preserve editability - we just need the plates
+  pdfOptions.preserveEditability = false;
   
-  log("Saved PDF/X: " + pdfPath);
+  // Don't open PDF after saving
+  pdfOptions.viewAfterSaving = false;
+  
+  // Embed fonts
+  pdfOptions.fontSubsetThreshold = 100;
+  
+  // High quality
+  pdfOptions.optimization = false;
+  
+  try {
+    doc.saveAs(file, pdfOptions);
+    log("Saved PDF: " + pdfPath);
+  } catch (saveErr) {
+    log("ERROR saving PDF: " + saveErr.message);
+    throw new Error("PDF save failed: " + saveErr.message);
+  }
 }
 
 // ============================================================================
@@ -540,7 +989,7 @@ function exportDieSVG(doc, dieItems, outputPath) {
 /**
  * Write scratch JSON with detection results and metadata.
  */
-function writeScratchJSON(scratchPath, doc, detectionResult) {
+function writeScratchJSON(scratchPath, doc, detectionResult, cardBoundsPerSide) {
   var data = {
     illustrator: {
       version: getIllustratorVersion(),
@@ -548,8 +997,9 @@ function writeScratchJSON(scratchPath, doc, detectionResult) {
       doc_color: "CMYK"
     },
     artboards: detectionResult.artboards,
-    sides: buildSidesInfo(detectionResult),
-    warnings: detectionResult.warnings || []
+    sides: buildSidesInfo(detectionResult, cardBoundsPerSide),
+    warnings: detectionResult.warnings || [],
+    cardBounds: cardBoundsPerSide || {}
   };
   
   writeJSON(scratchPath, data);
@@ -560,7 +1010,7 @@ function writeScratchJSON(scratchPath, doc, detectionResult) {
 /**
  * Build sides info for scratch JSON.
  */
-function buildSidesInfo(detectionResult) {
+function buildSidesInfo(detectionResult, cardBoundsPerSide) {
   var sides = [];
   
   for (var sideKey in detectionResult.sides) {
@@ -579,12 +1029,19 @@ function buildSidesInfo(detectionResult) {
       hasDie = true;
     }
     
-    sides.push({
+    var sideInfo = {
       side: sideName,
       index: 0,
       finishes: finishes,
       die: hasDie
-    });
+    };
+    
+    // Add card bounds if available
+    if (cardBoundsPerSide && cardBoundsPerSide[sideKey]) {
+      sideInfo.cardBounds = cardBoundsPerSide[sideKey];
+    }
+    
+    sides.push(sideInfo);
   }
   
   return sides;
@@ -644,6 +1101,8 @@ function duplicateDocument(doc) {
  * Write error JSON and exit.
  */
 function writeErrorAndExit(code, message) {
+  log("FATAL ERROR [" + code + "]: " + message);
+  
   try {
     var errorData = {
       success: false,
@@ -654,9 +1113,22 @@ function writeErrorAndExit(code, message) {
     };
     
     // Try to write to working directory if __JOB is available
-    if (typeof __JOB !== "undefined" && __JOB.output && __JOB.job_id) {
+    if (typeof __JOB !== "undefined" && __JOB && __JOB.output && __JOB.job_id) {
       var errorPath = normalizePathForES(__JOB.output) + "/" + __JOB.job_id + "_error.json";
       writeJSON(errorPath, errorData);
+      log("Error JSON written to: " + errorPath);
+      
+      // Also write to debug log
+      try {
+        var debugLog = new File(normalizePathForES(__JOB.output) + "/" + __JOB.job_id + "_jsx_debug.log");
+        debugLog.open("a");
+        debugLog.writeln("ERROR: " + code);
+        debugLog.writeln("Message: " + message);
+        debugLog.writeln("Time: " + new Date());
+        debugLog.close();
+      } catch (e2) {
+        // Ignore
+      }
     }
   } catch (e) {
     log("ERROR: Cannot write error JSON: " + e.message);
@@ -675,5 +1147,48 @@ function writeSentinel(path, content) {
   } catch (e) {
     log("ERROR: Cannot write sentinel: " + e.message);
   }
+}
+
+/**
+ * Log to debug file (helper function).
+ */
+function logToDebugFile(outputDir, jobId, message) {
+  try {
+    var debugLog = new File(outputDir + "/" + jobId + "_jsx_debug.log");
+    debugLog.open("a");  // Append mode
+    debugLog.writeln("[" + new Date().toTimeString() + "] " + message);
+    debugLog.close();
+  } catch (e) {
+    // Silently ignore logging errors
+    $.writeln("Log error: " + e.message);
+  }
+}
+
+/**
+ * Simple stringify for objects (ES3-compatible).
+ */
+function stringifySimple(obj) {
+  if (obj === null) return "null";
+  if (obj === undefined) return "undefined";
+  
+  var type = typeof obj;
+  if (type === "string") return obj;
+  if (type === "number" || type === "boolean") return String(obj);
+  
+  if (obj instanceof Array) {
+    return "[Array:" + obj.length + "]";
+  }
+  
+  if (type === "object") {
+    var keys = [];
+    for (var k in obj) {
+      if (obj.hasOwnProperty(k)) {
+        keys.push(k);
+      }
+    }
+    return "{" + keys.join(",") + "}";
+  }
+  
+  return String(obj);
 }
 
