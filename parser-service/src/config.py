@@ -260,14 +260,19 @@ def get_output_filename(side, layer_index, finish, extension=None):
     Args:
         side (str): "front" or "back"
         layer_index (int): Layer index (usually 0)
-        finish (str): Finish type (albedo, uv, foil, emboss, diecut_mask, diecut_svg)
+        finish (str): Finish type (albedo, uv, foil, emboss, diecut_mask, diecut_svg, die)
         extension (str, optional): File extension (auto-detected if None)
         
     Returns:
         str: Filename (e.g., "front_layer_0_albedo.png")
     """
-    if extension is None:
-        extension = OUTPUT_FORMATS.get(finish, "png")
+    # Normalize finish name: "die" → "diecut_mask", "diecut_svg" stays as-is
+    finish_normalized = finish
+    if finish.lower() in ["die", "diecut"]:
+        finish_normalized = "diecut_mask"
     
-    return f"{side}_layer_{layer_index}_{finish}.{extension}"
+    if extension is None:
+        extension = OUTPUT_FORMATS.get(finish_normalized, "png")
+    
+    return f"{side}_layer_{layer_index}_{finish_normalized}.{extension}"
 

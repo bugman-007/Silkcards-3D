@@ -162,53 +162,47 @@ class PlateExtractor:
         
         return plates
     
-    def convert_plates_to_png(self, plate_files: List[Path], 
-                             output_dir: Path,
-                             plate_mapping: Dict[str, str] = None) -> Dict[str, Path]:
+    def extract_and_convert_plates(pdf_path: Path, output_dir: Path, 
+                                job_id: str,
+                                expected_finishes: Optional[Dict[str, bool]] = None,
+                                finish_type: str = None) -> Dict[str, Any]:
         """
-        Convert plate TIFF files to PNG with proper naming.
+        Convenience function to extract plates and convert to PNG.
         
         Args:
-            plate_files: List of plate TIFF paths
-            output_dir: Output directory for PNGs
-            plate_mapping: Optional mapping of plate names to finish types
-            
+            pdf_path: Path to input PDF (may be single-finish PDF)
+            output_dir: Output directory
+            job_id: Job identifier
+            expected_finishes: Optional dict of expected finishes for validation
+            finish_type: Optional: if PDF is for ONE finish, specify it here
+                        (e.g., "uv", "foil", "albedo")
+        
         Returns:
-            Dict mapping finish type to PNG path
+            Dict with extraction results
         """
-        if plate_mapping is None:
-            plate_mapping = config.PLATE_MAPPING
+        extractor = PlateExtractor()
         
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Extract plates
+        plate_files = extractor.extract_plates(pdf_path, output_dir)
         
-        converted = {}
+        # Validate if expected finishes provided
+        errors = []
+        if expected_finishes:
+            errors = extractor.validate_plates(plate_files, expected_finishes)
+            
+            # Convert to PNG (passing finish_type hint)
+        converted = extractor.convert_plates_to_png(plate_files, output_dir,
+                                                    expected_finish=finish_type)
         
-        for plate_file in plate_files:
-            plate_name = plate_file.stem  # e.g., "(UV)" or "(Cyan)"
-            
-            logger.info(f"Converting plate: {plate_name}")
-            
-            # Check if this is a finish plate we care about
-            finish_type = plate_mapping.get(plate_name)
-            
-            if not finish_type:
-                # Check process plates
-                if plate_name in config.PROCESS_PLATES:
-                    logger.debug(f"Skipping process plate: {plate_name}")
-                    continue
-                else:
-                    logger.warning(f"Unknown plate: {plate_name}")
-                    continue
-            
-            # Convert TIFF to PNG
-            try:
-                png_path = self._tiff_to_png(plate_file, output_dir, finish_type)
-                converted[finish_type] = png_path
-                logger.info(f"Converted {plate_name} → {png_path.name}")
-            except Exception as e:
-                logger.error(f"Failed to convert {plate_name}: {e}")
+        # Get plate names for report
+        plates_detected = [p.stem for p in plate_files]
         
-        return converted
+        return {
+            "success": len(errors) == 0,
+            "plates_detected": plates_detected,
+            "converted": converted,
+            "errors": errors
+        }
     
     def _tiff_to_png(self, tiff_path: Path, output_dir: Path, 
                      finish_type: str) -> Path:

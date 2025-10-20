@@ -14,25 +14,27 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
   var __JOB = null;
   try {
     // Get the path to runtime/job.jsx - USE .fsName to get filesystem string!
-    var scriptFile = new File($.fileName);                    // scripts/jsx/export_to_pdf.jsx
-    var jsxFolder = scriptFile.parent;                        // scripts/jsx/
-    var scriptsFolder = jsxFolder.parent;                     // scripts/
+    var scriptFile = new File($.fileName); // scripts/jsx/export_to_pdf.jsx
+    var jsxFolder = scriptFile.parent; // scripts/jsx/
+    var scriptsFolder = jsxFolder.parent; // scripts/
     var runtimeJobPath = scriptsFolder.fsName + "/runtime/job.jsx";
-    
+
     // Normalize path separators for cross-platform compatibility
     runtimeJobPath = runtimeJobPath.replace(/\\/g, "/");
-    
+
     $.writeln("[JSX] Script file: " + scriptFile.fsName);
     $.writeln("[JSX] Scripts folder: " + scriptsFolder.fsName);
     $.writeln("[JSX] Looking for job config at: " + runtimeJobPath);
-    
+
     var jobFile = new File(runtimeJobPath);
-    
+
     if (!jobFile.exists) {
       $.writeln("[JSX] ERROR: Job config file not found at: " + runtimeJobPath);
       // Write emergency error to temp folder so Python can diagnose
       try {
-        var tempError = new File(Folder.temp.fsName + "/parser_job_config_error.txt");
+        var tempError = new File(
+          Folder.temp.fsName + "/parser_job_config_error.txt"
+        );
         tempError.open("w");
         tempError.writeln("Job config file not found");
         tempError.writeln("Expected at: " + runtimeJobPath);
@@ -44,31 +46,32 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
       }
       throw new Error("Job config file not found at: " + runtimeJobPath);
     }
-    
+
     $.writeln("[JSX] Job config file found, reading...");
-    
+
     // Read and evaluate the job config
     jobFile.open("r");
     var jobScript = jobFile.read();
     jobFile.close();
-    
+
     $.writeln("[JSX] Job config read, length: " + jobScript.length + " bytes");
-    
+
     // Evaluate the script to load __JOB variable
     eval(jobScript);
-    
+
     if (!__JOB) {
       throw new Error("Job config evaluated but __JOB is null");
     }
-    
+
     $.writeln("[JSX] Job config loaded successfully");
     $.writeln("[JSX] Job ID: " + __JOB.job_id);
-    
   } catch (e) {
     $.writeln("[JSX] FATAL: Cannot load job config: " + e.message);
     // Write emergency error to temp folder
     try {
-      var tempError = new File(Folder.temp.fsName + "/parser_job_config_error.txt");
+      var tempError = new File(
+        Folder.temp.fsName + "/parser_job_config_error.txt"
+      );
       tempError.open("w");
       tempError.writeln("ERROR: " + e.message);
       tempError.writeln("Line: " + (e.line || "unknown"));
@@ -78,24 +81,30 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
       // Ignore
     }
     // This will fail gracefully if __JOB is not loaded
-    writeErrorAndExit("JOB_CONFIG_MISSING", "Cannot load runtime/job.jsx: " + e.message);
+    writeErrorAndExit(
+      "JOB_CONFIG_MISSING",
+      "Cannot load runtime/job.jsx: " + e.message
+    );
     return;
   }
-  
+
   // Validate job config
   if (!__JOB || !__JOB.input || !__JOB.output || !__JOB.job_id) {
-    writeErrorAndExit("JOB_CONFIG_INVALID", "Invalid job configuration in runtime/job.jsx");
+    writeErrorAndExit(
+      "JOB_CONFIG_INVALID",
+      "Invalid job configuration in runtime/job.jsx"
+    );
     return;
   }
-  
+
   var jobId = __JOB.job_id;
   var inputPath = normalizePathForES(__JOB.input);
   var outputDir = normalizePathForES(__JOB.output); // Working directory
-  
+
   log("Starting job " + jobId);
   log("Input: " + inputPath);
   log("Output: " + outputDir);
-  
+
   // Write debug log
   try {
     var debugLog = new File(outputDir + "/" + jobId + "_jsx_debug.log");
@@ -110,14 +119,17 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
   } catch (e) {
     log("WARNING: Could not write debug log: " + e.message);
   }
-  
+
   // Open document
   var doc = openDocument(inputPath);
   if (!doc) {
-    writeErrorAndExit("AI_OPEN_FAILED", "Failed to open .ai file: " + inputPath);
+    writeErrorAndExit(
+      "AI_OPEN_FAILED",
+      "Failed to open .ai file: " + inputPath
+    );
     return;
   }
-  
+
   // Log successful open
   try {
     var debugLog = new File(outputDir + "/" + jobId + "_jsx_debug.log");
@@ -128,113 +140,194 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
   } catch (e) {
     // Ignore logging errors
   }
-  
+
   try {
     // Instead of duplicating, we'll work directly with the document
     // and close it at the end without saving
-    logToDebugFile(outputDir, jobId, "Working with document directly (no duplication needed)");
-    
+    logToDebugFile(
+      outputDir,
+      jobId,
+      "Working with document directly (no duplication needed)"
+    );
+
     // Validate document has artboards FIRST
     if (!doc.artboards || doc.artboards.length === 0) {
       throw new Error("Document has no artboards");
     }
-    
+
     log("Document opened: " + doc.artboards.length + " artboard(s)");
-    logToDebugFile(outputDir, jobId, "Validated: " + doc.artboards.length + " artboard(s)");
-    
+    logToDebugFile(
+      outputDir,
+      jobId,
+      "Validated: " + doc.artboards.length + " artboard(s)"
+    );
+
     // Force redraw to ensure document is ready
     app.redraw();
     logToDebugFile(outputDir, jobId, "Document ready for processing");
-    
+
     // Phase 1: Detection
     log("Phase 1: Detection");
     logToDebugFile(outputDir, jobId, "===== Phase 1: Detection =====");
     var detectionResult = detectFinishes(doc);
-    logToDebugFile(outputDir, jobId, "Detection completed. Finishes found: " + stringifySimple(detectionResult.finishesUsed));
-    
+    logToDebugFile(
+      outputDir,
+      jobId,
+      "Detection completed. Finishes found: " +
+        stringifySimple(detectionResult.finishesUsed)
+    );
+
     // Phase 2: Create spot swatches
     log("Phase 2: Creating spot swatches");
-    logToDebugFile(outputDir, jobId, "===== Phase 2: Creating spot swatches =====");
+    logToDebugFile(
+      outputDir,
+      jobId,
+      "===== Phase 2: Creating spot swatches ====="
+    );
     createSpotSwatches(doc, detectionResult.finishesUsed);
     logToDebugFile(outputDir, jobId, "Spot swatches created");
-    
+
     // Phase 3: Calculate card bounds for each side
     log("Phase 3: Calculating card bounds per side");
-    logToDebugFile(outputDir, jobId, "===== Phase 3: Calculating card bounds =====");
-    var cardBoundsPerSide = calculateCardBoundsForAllSides(doc, detectionResult);
-    logToDebugFile(outputDir, jobId, "Card bounds calculated: " + stringifySimple(cardBoundsPerSide));
-    
+    logToDebugFile(
+      outputDir,
+      jobId,
+      "===== Phase 3: Calculating card bounds ====="
+    );
+    var cardBoundsPerSide = calculateCardBoundsForAllSides(
+      doc,
+      detectionResult
+    );
+    logToDebugFile(
+      outputDir,
+      jobId,
+      "Card bounds calculated: " + stringifySimple(cardBoundsPerSide)
+    );
+
     // Phase 4: Process each side separately (PER-SIDE EXPORT!)
     log("Phase 4: Processing each side separately");
-    logToDebugFile(outputDir, jobId, "===== Phase 4: Per-Side Processing =====");
-    
+    logToDebugFile(
+      outputDir,
+      jobId,
+      "===== Phase 4: Per-Side Processing ====="
+    );
     for (var sideKey in detectionResult.sides) {
       if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
-      
-      var sideName = sideKey.split("_")[0]; // "front" or "back"
-      var sideIndex = 0; // Always 0 for now (single layer)
-      
-      logToDebugFile(outputDir, jobId, "--- Processing side: " + sideName + " ---");
-      
-      // Get card bounds for this side
+      var sideName = sideKey.split("_")[0];
+      var sideIndex = 0;
+      logToDebugFile(
+        outputDir,
+        jobId,
+        "--- Processing side: " + sideName + " ---"
+      );
       var cardBounds = cardBoundsPerSide[sideKey];
       if (!cardBounds) {
-        logToDebugFile(outputDir, jobId, "No card bounds for " + sideKey + ", skipping");
+        logToDebugFile(
+          outputDir,
+          jobId,
+          "No card bounds for " + sideKey + ", skipping"
+        );
         continue;
       }
-      
-      // 4a: Export albedo PNG at card size (BEFORE recoloring)
-      logToDebugFile(outputDir, jobId, "Exporting albedo for " + sideName + " at card size");
-      exportSideAlbedo(doc, sideName, sideIndex, cardBounds, outputDir);
-      
-      // 4b: Recolor items to spots
-      logToDebugFile(outputDir, jobId, "Recoloring items for " + sideName);
-      recolorSideItemsToSpots(doc, sideKey, detectionResult);
-      
-      // 4c: Export side PDF with card-sized artboard
-      logToDebugFile(outputDir, jobId, "Exporting PDF for " + sideName + " at card size");
-      exportSidePDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId);
-      
-      // 4d: Export die SVG at card size (if DIE present)
-      if (detectionResult.sides[sideKey].DIE && detectionResult.sides[sideKey].DIE.length > 0) {
-        logToDebugFile(outputDir, jobId, "Exporting die SVG for " + sideName);
-        exportSideDieSVG(doc, sideName, sideIndex, cardBounds, detectionResult.sides[sideKey].DIE, outputDir);
+
+      // Step 1: Export CMYK albedo PDF (NO recoloring, just CMYK composite)
+      logToDebugFile(
+        outputDir,
+        jobId,
+        "  Exporting albedo (CMYK composite) PDF..."
+      );
+      exportFinishPDF(
+        doc,
+        sideName,
+        sideIndex,
+        cardBounds,
+        outputDir,
+        jobId,
+        "albedo",
+        null
+      );
+
+      // Step 2: Export separate PDF for EACH finish with spot recoloring
+      // Step 2: Export separate PDF for EACH finish with spot recoloring
+var finishes = ["UV", "FOIL", "EMBOSS", "DIE"];
+for (var f = 0; f < finishes.length; f++) {
+  var finishType = finishes[f];
+  var buckets = detectionResult.sides[sideKey];
+  var finishItems = buckets[finishType];
+  
+  if (!finishItems || finishItems.length === 0) {
+    logToDebugFile(outputDir, jobId, "  No " + finishType + " items, skipping export");
+    continue;
+  }
+  
+  logToDebugFile(outputDir, jobId, "  Exporting " + finishType + " PDF with spot color...");
+  exportFinishPDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId, finishType, sideKey, detectionResult);
+  
+  // For DIE, also export SVG vector reference
+  if (finishType === "DIE" && finishItems.length > 0) {
+    logToDebugFile(outputDir, jobId, "  ✓ Found " + finishItems.length + " " + finishType + " items");
+    logToDebugFile(outputDir, jobId, "  Exporting DIE SVG vector reference...");
+    exportFinishSVG(doc, sideName, sideIndex, cardBounds, finishItems, outputDir);
+  }
+}
+
+      // Step 3: Export die SVG (vector reference)
+      if (
+        detectionResult.sides[sideKey].DIE &&
+        detectionResult.sides[sideKey].DIE.length > 0
+      ) {
+        logToDebugFile(outputDir, jobId, "  Exporting die SVG...");
+        exportSideDieSVG(
+          doc,
+          sideName,
+          sideIndex,
+          cardBounds,
+          detectionResult.sides[sideKey].DIE,
+          outputDir
+        );
       }
-      
+
       logToDebugFile(outputDir, jobId, "Completed processing for " + sideName);
     }
-    
+
     logToDebugFile(outputDir, jobId, "All sides processed");
-    
+
     // Phase 5: Write scratch JSON
     log("Phase 5: Writing scratch JSON");
-    logToDebugFile(outputDir, jobId, "===== Phase 5: Writing scratch JSON =====");
+    logToDebugFile(
+      outputDir,
+      jobId,
+      "===== Phase 5: Writing scratch JSON ====="
+    );
     var scratchPath = outputDir + "/" + jobId + "_scratch.json";
     writeScratchJSON(scratchPath, doc, detectionResult, cardBoundsPerSide);
     logToDebugFile(outputDir, jobId, "Scratch JSON written");
-    
+
     // Success
     log("Job completed successfully");
     logToDebugFile(outputDir, jobId, "===== JOB COMPLETED SUCCESSFULLY =====");
-    
+
     // Close document without saving (this is safe - doesn't modify original file)
     try {
       doc.close(SaveOptions.DONOTSAVECHANGES);
       logToDebugFile(outputDir, jobId, "Document closed without saving");
     } catch (closeErr) {
-      logToDebugFile(outputDir, jobId, "Warning: Could not close document cleanly: " + closeErr.message);
+      logToDebugFile(
+        outputDir,
+        jobId,
+        "Warning: Could not close document cleanly: " + closeErr.message
+      );
       // Continue anyway - the important work is done
     }
-    
+
     // Write success sentinel
     writeSentinel(outputDir + "/" + jobId + "_jsx_done.txt", "success");
     logToDebugFile(outputDir, jobId, "Success sentinel written");
     logToDebugFile(outputDir, jobId, "Script completed at: " + new Date());
-    
+
     // CRITICAL: Quit Illustrator so Python can continue
     logToDebugFile(outputDir, jobId, "Quitting Illustrator...");
     app.quit();
-    
   } catch (e) {
     log("ERROR: " + e.message);
     logToDebugFile(outputDir, jobId, "===== FATAL ERROR =====");
@@ -242,7 +335,7 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
     logToDebugFile(outputDir, jobId, "Line: " + (e.line || "unknown"));
     logToDebugFile(outputDir, jobId, "File: " + (e.fileName || "unknown"));
     logToDebugFile(outputDir, jobId, "Stack: " + (e.stack || "no stack trace"));
-    
+
     // Try to close document
     try {
       if (doc) {
@@ -250,12 +343,16 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
         logToDebugFile(outputDir, jobId, "Document closed after error");
       }
     } catch (e2) {
-      logToDebugFile(outputDir, jobId, "Could not close document: " + e2.message);
+      logToDebugFile(
+        outputDir,
+        jobId,
+        "Could not close document: " + e2.message
+      );
       // Not critical - process will clean up
     }
-    
+
     writeErrorAndExit("PDF_SAVE_FAILED", e.message);
-    
+
     // Quit Illustrator even on error so Python can continue
     logToDebugFile(outputDir, jobId, "Quitting Illustrator after error...");
     app.quit();
@@ -275,47 +372,52 @@ function detectFinishes(doc) {
     artboards: [],
     sides: {},
     finishesUsed: {},
-    warnings: []
+    warnings: [],
   };
-  
+
   // Collect artboard info
   for (var i = 0; i < doc.artboards.length; i++) {
     var ab = doc.artboards[i];
     var abInfo = {
       index: i,
-      name: ab.name || ("Artboard " + (i + 1)),
-      bounds: [ab.artboardRect[0], ab.artboardRect[1], ab.artboardRect[2], ab.artboardRect[3]],
-      side: determineSide(ab, i)
+      name: ab.name || "Artboard " + (i + 1),
+      bounds: [
+        ab.artboardRect[0],
+        ab.artboardRect[1],
+        ab.artboardRect[2],
+        ab.artboardRect[3],
+      ],
+      side: determineSide(ab, i),
     };
-    
+
     // Check if artboard name itself indicates a finish (Case B)
     abInfo.finish = detectFinishFromName(abInfo.name);
-    
+
     result.artboards.push(abInfo);
   }
-  
+
   // Initialize side buckets (front/back, layer 0)
   result.sides.front_layer_0 = {
     PRINT: [],
     FOIL: [],
     UV: [],
     EMBOSS: [],
-    DIE: []
+    DIE: [],
   };
   result.sides.back_layer_0 = {
     PRINT: [],
     UV: [],
     FOIL: [],
     EMBOSS: [],
-    DIE: []
+    DIE: [],
   };
-  
+
   // Process all layers (Case A: layer/sublayer names)
   processLayersForFinishes(doc, result);
-  
+
   // Process artboard-based finishes (Case B: artboard names)
   processArtboardsForFinishes(doc, result);
-  
+
   return result;
 }
 
@@ -336,33 +438,33 @@ function processLayerRecursive(doc, layer, result) {
   if (!layer.visible || layer.locked) {
     return; // Skip hidden/locked layers
   }
-  
+
   // Detect finish from layer name
   var layerFinish = detectFinishFromName(layer.name);
-  
+
   // Process all page items in this layer
   var items = collectLayerItems(layer, []);
-  
+
   for (var i = 0; i < items.length; i++) {
     var item = items[i];
-    
+
     // Determine which side this item belongs to
     var itemSide = determineItemSide(doc, item, result.artboards);
     var sideKey = itemSide + "_layer_0";
-    
+
     if (!result.sides[sideKey]) {
       continue; // Unknown side
     }
-    
+
     // Classify item into finish bucket
     var finishType = layerFinish || "PRINT";
-    
+
     if (!result.sides[sideKey][finishType]) {
       result.sides[sideKey][finishType] = [];
     }
-    
+
     result.sides[sideKey][finishType].push(item);
-    
+
     // Track which finishes are used
     if (finishType !== "PRINT") {
       result.finishesUsed[finishType] = true;
@@ -377,34 +479,34 @@ function processArtboardsForFinishes(doc, result) {
   // If an artboard name carries a finish token, all content on it is for that finish
   for (var i = 0; i < result.artboards.length; i++) {
     var abInfo = result.artboards[i];
-    
+
     if (!abInfo.finish) {
       continue; // No finish detected from artboard name
     }
-    
+
     // Get all items on this artboard
     var items = getItemsOnArtboard(doc, abInfo.index);
-    
+
     for (var j = 0; j < items.length; j++) {
       var item = items[j];
-      
+
       // Determine side
       var itemSide = determineSide(doc.artboards[abInfo.index], abInfo.index);
       var sideKey = itemSide + "_layer_0";
-      
+
       if (!result.sides[sideKey]) {
         continue;
       }
-      
+
       // Add to finish bucket
       var finishType = abInfo.finish;
-      
+
       if (!result.sides[sideKey][finishType]) {
         result.sides[sideKey][finishType] = [];
       }
-      
+
       result.sides[sideKey][finishType].push(item);
-      
+
       // Track which finishes are used
       result.finishesUsed[finishType] = true;
     }
@@ -417,20 +519,20 @@ function processArtboardsForFinishes(doc, result) {
 function determineItemSide(doc, item, artboards) {
   try {
     var itemBounds = item.geometricBounds;
-    
+
     var maxOverlap = 0;
     var bestSide = "front";
-    
+
     for (var i = 0; i < artboards.length; i++) {
       var ab = artboards[i];
       var overlap = calculateOverlapArea(itemBounds, ab.bounds);
-      
+
       if (overlap > maxOverlap) {
         maxOverlap = overlap;
         bestSide = ab.side;
       }
     }
-    
+
     return bestSide;
   } catch (e) {
     return "front"; // Default
@@ -443,10 +545,10 @@ function determineItemSide(doc, item, artboards) {
 function getItemsOnArtboard(doc, artboardIndex) {
   var items = [];
   var abBounds = doc.artboards[artboardIndex].artboardRect;
-  
+
   for (var i = 0; i < doc.pageItems.length; i++) {
     var item = doc.pageItems[i];
-    
+
     try {
       if (boundsOverlap(item.geometricBounds, abBounds, 1.0)) {
         items.push(item);
@@ -455,7 +557,7 @@ function getItemsOnArtboard(doc, artboardIndex) {
       // Skip items that can't be checked
     }
   }
-  
+
   return items;
 }
 
@@ -468,10 +570,10 @@ function getItemsOnArtboard(doc, artboardIndex) {
  */
 function createSpotSwatches(doc, finishesUsed) {
   var finishNames = ["UV", "FOIL", "EMBOSS", "DIE"];
-  
+
   for (var i = 0; i < finishNames.length; i++) {
     var finishName = finishNames[i];
-    
+
     if (finishesUsed[finishName]) {
       log("Creating spot swatch: " + finishName);
       ensureSwatch(doc, finishName, "spot");
@@ -489,26 +591,26 @@ function createSpotSwatches(doc, finishesUsed) {
 function recolorItemsToSpots(doc, detectionResult) {
   var finishTypes = ["UV", "FOIL", "EMBOSS", "DIE"];
   var totalRecolored = 0;
-  
+
   log("==== Starting Recoloring Phase ====");
-  
+
   for (var sideKey in detectionResult.sides) {
     if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
-    
+
     var buckets = detectionResult.sides[sideKey];
     log("Processing side: " + sideKey);
-    
+
     for (var i = 0; i < finishTypes.length; i++) {
       var finishType = finishTypes[i];
       var items = buckets[finishType];
-      
+
       if (!items || items.length === 0) {
         log("  " + finishType + ": 0 items (skipping)");
         continue;
       }
-      
+
       log("  " + finishType + ": " + items.length + " items to recolor");
-      
+
       // Get spot swatch
       var swatch = findSwatch(doc, finishType);
       if (!swatch) {
@@ -516,9 +618,9 @@ function recolorItemsToSpots(doc, detectionResult) {
         log("  CRITICAL: Cannot recolor without spot swatch!");
         continue;
       }
-      
+
       log("  ✓ Found spot swatch: " + swatch.name);
-      
+
       // Recolor each item recursively
       var successCount = 0;
       for (var j = 0; j < items.length; j++) {
@@ -527,19 +629,28 @@ function recolorItemsToSpots(doc, detectionResult) {
           successCount += recoloredCount;
         }
       }
-      
-      log("  ✓ Recolored " + successCount + " sub-items from " + items.length + " top-level items to " + finishType);
+
+      log(
+        "  ✓ Recolored " +
+          successCount +
+          " sub-items from " +
+          items.length +
+          " top-level items to " +
+          finishType
+      );
       totalRecolored += successCount;
     }
   }
-  
+
   log("==== Recoloring Complete ====");
   log("Total sub-items recolored: " + totalRecolored);
-  
+
   if (totalRecolored === 0) {
     log("⚠️  WARNING: NO items were recolored! PDF will have NO spot plates!");
     log("⚠️  This means detection found items but recoloring failed.");
-    log("⚠️  Check: 1) Spot swatch creation, 2) Item types, 3) Locked/hidden items");
+    log(
+      "⚠️  Check: 1) Spot swatch creation, 2) Item types, 3) Locked/hidden items"
+    );
   }
 }
 
@@ -552,21 +663,21 @@ function findSwatch(doc, name) {
       return doc.swatches[i];
     }
   }
-  
+
   // Try spots
   for (var j = 0; j < doc.spots.length; j++) {
     if (doc.spots[j].name === name) {
       return doc.spots[j];
     }
   }
-  
+
   return null;
 }
 
 /**
  * Recursively recolor an item and all its children to a spot color.
  * Returns the number of atomic items successfully recolored.
- * 
+ *
  * This handles:
  * - GroupItems (recurse into children)
  * - CompoundPathItems (recolor all pathItems)
@@ -575,10 +686,10 @@ function findSwatch(doc, name) {
  */
 function recolorItemToSpotRecursive(item, spot) {
   var count = 0;
-  
+
   try {
     var itemType = item.typename;
-    
+
     // Handle GroupItems - recurse into children
     if (itemType === "GroupItem") {
       for (var i = 0; i < item.pageItems.length; i++) {
@@ -586,7 +697,7 @@ function recolorItemToSpotRecursive(item, spot) {
       }
       return count;
     }
-    
+
     // Handle CompoundPathItems - recurse into pathItems
     if (itemType === "CompoundPathItem") {
       for (var j = 0; j < item.pathItems.length; j++) {
@@ -594,17 +705,21 @@ function recolorItemToSpotRecursive(item, spot) {
       }
       return count;
     }
-    
+
     // Handle TextFrames - recolor text characters
     if (itemType === "TextFrame") {
       return recolorTextFrame(item, spot);
     }
-    
+
     // Handle atomic items (PathItem, RasterItem, etc.)
     return recolorAtomicItem(item, spot);
-    
   } catch (e) {
-    log("    WARNING: Cannot process item type " + (itemType || "unknown") + ": " + e.message);
+    log(
+      "    WARNING: Cannot process item type " +
+        (itemType || "unknown") +
+        ": " +
+        e.message
+    );
     return 0;
   }
 }
@@ -617,21 +732,21 @@ function recolorAtomicItem(item, spot) {
     var spotColor = new SpotColor();
     spotColor.spot = spot;
     spotColor.tint = 100;
-    
+
     var recolored = false;
-    
+
     // Set fill if present
     if (item.filled) {
       item.fillColor = spotColor;
       recolored = true;
     }
-    
+
     // Set stroke if present
     if (item.stroked) {
       item.strokeColor = spotColor;
       recolored = true;
     }
-    
+
     return recolored ? 1 : 0;
   } catch (e) {
     log("    WARNING: Cannot recolor atomic item: " + e.message);
@@ -648,14 +763,14 @@ function recolorTextFrame(textFrame, spot) {
     var spotColor = new SpotColor();
     spotColor.spot = spot;
     spotColor.tint = 100;
-    
+
     // Try to recolor all text characters
     if (textFrame.textRange && textFrame.textRange.characterAttributes) {
       textFrame.textRange.characterAttributes.fillColor = spotColor;
       textFrame.textRange.characterAttributes.strokeColor = spotColor;
       return 1;
     }
-    
+
     return 0;
   } catch (e) {
     log("    WARNING: Cannot recolor text frame: " + e.message);
@@ -673,13 +788,13 @@ function recolorTextFrame(textFrame, spot) {
  */
 function calculateCardBoundsForAllSides(doc, detectionResult) {
   var boundsPerSide = {};
-  
+
   for (var sideKey in detectionResult.sides) {
     if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
-    
+
     var buckets = detectionResult.sides[sideKey];
     var allItems = [];
-    
+
     // Priority 1: Use DIE bounds if available (most accurate for card size)
     if (buckets.DIE && buckets.DIE.length > 0) {
       allItems = buckets.DIE;
@@ -691,14 +806,20 @@ function calculateCardBoundsForAllSides(doc, detectionResult) {
           allItems = allItems.concat(buckets[finish]);
         }
       }
-      log("Using content bounds for " + sideKey + " (" + allItems.length + " items)");
+      log(
+        "Using content bounds for " +
+          sideKey +
+          " (" +
+          allItems.length +
+          " items)"
+      );
     }
-    
+
     if (allItems.length > 0) {
       boundsPerSide[sideKey] = getItemsBounds(allItems);
     }
   }
-  
+
   return boundsPerSide;
 }
 
@@ -708,12 +829,12 @@ function calculateCardBoundsForAllSides(doc, detectionResult) {
  */
 function getItemsBounds(items) {
   if (!items || items.length === 0) return null;
-  
+
   var left = 999999;
   var top = -999999;
   var right = -999999;
   var bottom = 999999;
-  
+
   for (var i = 0; i < items.length; i++) {
     try {
       var bounds = items[i].geometricBounds; // [left, top, right, bottom]
@@ -725,7 +846,7 @@ function getItemsBounds(items) {
       // Skip items that can't provide bounds
     }
   }
-  
+
   return [left, top, right, bottom];
 }
 
@@ -739,20 +860,19 @@ function getItemsBounds(items) {
 function exportSideAlbedo(doc, sideName, sideIndex, cardBounds, outputDir) {
   var filename = sideName + "_layer_" + sideIndex + "_albedo.png";
   var outputPath = outputDir + "/" + filename;
-  
+
   log("Exporting card-sized albedo: " + filename);
-  
+
   // Create temp artboard at card bounds
   var tempAB = doc.artboards.add(cardBounds);
   var tempABIndex = doc.artboards.length - 1;
-  
+
   try {
     // Set as active
     doc.artboards.setActiveArtboardIndex(tempABIndex);
-    
+
     // Export PNG clipped to this artboard
     exportArtboardToPNG(doc, tempABIndex, outputPath, 300);
-    
   } finally {
     // Remove temp artboard
     doc.artboards.remove(tempABIndex);
@@ -766,25 +886,25 @@ function recolorSideItemsToSpots(doc, sideKey, detectionResult) {
   var buckets = detectionResult.sides[sideKey];
   var finishTypes = ["UV", "FOIL", "EMBOSS", "DIE"];
   var totalRecolored = 0;
-  
+
   for (var i = 0; i < finishTypes.length; i++) {
     var finishType = finishTypes[i];
     var items = buckets[finishType];
-    
+
     if (!items || items.length === 0) continue;
-    
+
     var swatch = findSwatch(doc, finishType);
     if (!swatch) {
       log("  WARNING: Swatch not found for " + finishType);
       continue;
     }
-    
+
     // Recolor each item recursively
     for (var j = 0; j < items.length; j++) {
       totalRecolored += recolorItemToSpotRecursive(items[j], swatch);
     }
   }
-  
+
   log("  Recolored " + totalRecolored + " sub-items for " + sideKey);
   return totalRecolored;
 }
@@ -792,38 +912,382 @@ function recolorSideItemsToSpots(doc, sideKey, detectionResult) {
 /**
  * Export PDF for one side with card-sized artboard and spot colors.
  */
-function exportSidePDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId) {
-  var filename = jobId + "_" + sideName + "_layer_" + sideIndex + ".pdf";
+/**
+ * Export PDF for one finish (albedo or spotted effect) with card-sized artboard.
+ *
+ * @param {Document} doc - Illustrator document
+ * @param {String} sideName - "front" or "back"
+ * @param {Number} sideIndex - Layer index (usually 0)
+ * @param {Array} cardBounds - [left, top, right, bottom] in points
+ * @param {String} outputDir - Output directory path
+ * @param {String} jobId - Job identifier
+ * @param {String} finishType - "albedo", "UV", "FOIL", "EMBOSS", or "DIE"
+ * @param {String} sideKey - Optional: "front_layer_0" or "back_layer_0"
+ * @param {Object} detectionResult - Optional: Detection data for recoloring
+ */
+function exportFinishPDF(
+  doc,
+  sideName,
+  sideIndex,
+  cardBounds,
+  outputDir,
+  jobId,
+  finishType,
+  sideKey,
+  detectionResult
+) {
+  var filename =
+    jobId +
+    "_" +
+    sideName +
+    "_layer_" +
+    sideIndex +
+    "_" +
+    finishType.toLowerCase() +
+    ".pdf";
   var pdfPath = outputDir + "/" + filename;
+
+  log("Exporting " + finishType + " PDF: " + filename);
+  logToDebugFile(outputDir, jobId, "    PDF path: " + pdfPath);
+
+  // Snapshot current layer visibility
+  var layerSnapshot = snapshotLayerVisibility(doc);
+
+  try {
+    // Step A: Isolate content for this finish
+    if (finishType === "albedo") {
+      // Albedo: show all non-effect content (print layers only)
+      logToDebugFile(
+        outputDir,
+        jobId,
+        "    Isolating albedo (print) content..."
+      );
+      isolateAlbedoContent(doc, sideName, sideIndex);
+    } else {
+      // Effect finish (UV, FOIL, EMBOSS, DIE): show ONLY that finish
+      logToDebugFile(
+        outputDir,
+        jobId,
+        "    Isolating " + finishType + " content..."
+      );
+      isolateFinishContent(
+        doc,
+        sideName,
+        sideIndex,
+        finishType,
+        sideKey,
+        detectionResult
+      );
+
+      // Step B: Recolor isolated finish items to their spot color
+      var swatch = findSwatch(doc, finishType);
+      if (swatch) {
+        logToDebugFile(
+          outputDir,
+          jobId,
+          "    Recoloring " + finishType + " items to spot..."
+        );
+        recolorVisibleItemsToSpot(doc, swatch);
+      } else {
+        logToDebugFile(
+          outputDir,
+          jobId,
+          "    WARNING: Spot swatch '" + finishType + "' not found!"
+        );
+      }
+    }
+
+    // Step C: Create temp artboard and export
+    var tempAB = doc.artboards.add(cardBounds);
+    var tempABIndex = doc.artboards.length - 1;
+
+    try {
+      doc.artboards.setActiveArtboardIndex(tempABIndex);
+      app.redraw();
+
+      // Export PDF with spots preserved
+      saveToPDFX(doc, pdfPath);
+      logToDebugFile(outputDir, jobId, "    ✓ Exported: " + filename);
+    } finally {
+      // Remove temp artboard
+      doc.artboards.remove(tempABIndex);
+    }
+  } finally {
+    // Restore all layer visibility
+    restoreLayerVisibility(layerSnapshot);
+    app.redraw();
+  }
+}
+
+/**
+ * Export DIE items to SVG for vector reference.
+ * Creates card-sized SVG of die-cut lines.
+ */
+function exportFinishSVG(doc, sideName, sideIndex, cardBounds, dieItems, outputDir) {
+  var filename = sideName + "_layer_" + sideIndex + "_diecut.svg";
+  var svgPath = outputDir + "/" + filename;
   
-  log("Exporting card-sized PDF: " + filename);
+  log("Exporting die SVG: " + filename);
   
-  // Create temp artboard at card bounds
-  var tempAB = doc.artboards.add(cardBounds);
-  var tempABIndex = doc.artboards.length - 1;
+  // Create temporary layer for SVG export
+  var tempLayer = ensureLayer(doc, "__DIE_SVG_EXPORT_TEMP__");
+  tempLayer.visible = true;
   
   try {
-    // Set as active
-    doc.artboards.setActiveArtboardIndex(tempABIndex);
+    // Duplicate die items to temp layer
+    var duplicates = [];
+    for (var i = 0; i < dieItems.length; i++) {
+      try {
+        var dup = dieItems[i].duplicate(tempLayer, ElementPlacement.PLACEATEND);
+        duplicates.push(dup);
+      } catch (e) {
+        $.writeln("Could not duplicate die item: " + e.message);
+      }
+    }
     
-    // Save PDF with spots preserved (will only include visible content on this artboard)
-    saveToPDFX(doc, pdfPath);
+    // Snapshot layer visibility
+    var layerVis = snapshotLayerVisibility(doc);
     
+    try {
+      // Hide all layers except temp layer
+      for (var j = 0; j < doc.layers.length; j++) {
+        try {
+          doc.layers[j].visible = (doc.layers[j] === tempLayer);
+        } catch (_) {}
+      }
+      app.redraw();
+      
+      // Create temp artboard
+      var tempAB = doc.artboards.add(cardBounds);
+      var tempABIndex = doc.artboards.length - 1;
+      
+      try {
+        doc.artboards.setActiveArtboardIndex(tempABIndex);
+        app.redraw();
+        
+        // Export to SVG
+        var file = new File(svgPath);
+        var svgOptions = new ExportOptionsSVG();
+        svgOptions.embedRasterImages = false;
+        svgOptions.cssProperties = SVGCSSPropertyLocation.STYLEELEMENTS;
+        svgOptions.fontSubsetting = SVGFontSubsetting.None;
+        svgOptions.coordinatePrecision = 2;
+        
+        doc.exportFile(file, ExportType.SVG, svgOptions);
+        
+        $.writeln("[SVG] Exported: " + filename);
+        
+      } finally {
+        // Remove temp artboard
+        doc.artboards.remove(tempABIndex);
+      }
+      
+    } finally {
+      // Restore layer visibility
+      restoreLayerVisibility(layerVis);
+      app.redraw();
+    }
+    
+  } catch (e) {
+    $.writeln("[ERROR] SVG export failed: " + e.message);
   } finally {
-    // Remove temp artboard
-    doc.artboards.remove(tempABIndex);
+    // Clean up temp layer
+    try {
+      tempLayer.remove();
+    } catch (_) {}
   }
+}
+
+/**
+ * Isolate albedo (CMYK print) content for a side.
+ * Hides all effect layers (UV, FOIL, EMBOSS, DIE).
+ */
+function isolateAlbedoContent(doc, sideName, sideIndex) {
+  var prefix = sideName + "_layer_" + sideIndex;
+  var prefixLower = prefix.toLowerCase();
+
+  var effectTokens = [
+    "_uv",
+    "_spot_uv",
+    "_spot-uv",
+    "_foil",
+    "_emboss",
+    "_deboss",
+    "_die",
+    "_die_cut",
+    "_diecut",
+    "_laser_cut",
+    "_laser-cut",
+    "_cutline",
+  ];
+
+  // Hide all layers except the card layer
+  for (var i = 0; i < doc.layers.length; i++) {
+    var L = doc.layers[i];
+    var layerNameLower = (L.name || "").toLowerCase();
+
+    // Keep only the card's non-effect layers visible
+    var isCardLayer = layerNameLower.indexOf(prefixLower) >= 0;
+    var isEffectLayer = false;
+
+    for (var e = 0; e < effectTokens.length; e++) {
+      if (layerNameLower.indexOf(prefixLower + effectTokens[e]) >= 0) {
+        isEffectLayer = true;
+        break;
+      }
+    }
+
+    try {
+      L.visible = isCardLayer && !isEffectLayer;
+    } catch (_) {}
+  }
+}
+
+/**
+ * Isolate content for ONE specific finish (UV, FOIL, EMBOSS, DIE).
+ * Hides everything except items for that finish.
+ */
+function isolateFinishContent(
+  doc,
+  sideName,
+  sideIndex,
+  finishType,
+  sideKey,
+  detectionResult
+) {
+  var prefix = sideName + "_layer_" + sideIndex;
+  var prefixLower = prefix.toLowerCase();
+
+  // Map finish type to token(s)
+  var finishTokens = [];
+  if (finishType === "UV") {
+    finishTokens = ["_uv", "_spot_uv", "_spot-uv"];
+  } else if (finishType === "FOIL") {
+    finishTokens = ["_foil"];
+  } else if (finishType === "EMBOSS") {
+    finishTokens = ["_emboss", "_deboss"];
+  } else if (finishType === "DIE") {
+    finishTokens = [
+      "_die",
+      "_die_cut",
+      "_diecut",
+      "_laser_cut",
+      "_laser-cut",
+      "_cutline",
+    ];
+  }
+
+  if (finishTokens.length === 0) return;
+
+  // Hide everything first
+  for (var i = 0; i < doc.layers.length; i++) {
+    try {
+      doc.layers[i].visible = false;
+    } catch (_) {}
+  }
+
+  // Show layers with matching tokens
+  for (var j = 0; j < doc.layers.length; j++) {
+    var L = doc.layers[j];
+    var layerNameLower = (L.name || "").toLowerCase();
+
+    for (var t = 0; t < finishTokens.length; t++) {
+      if (layerNameLower.indexOf(prefixLower + finishTokens[t]) >= 0) {
+        try {
+          L.visible = true;
+        } catch (_) {}
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * Recolor all visible items (and their children) to a spot color.
+ * Only affects currently visible layers.
+ */
+function recolorVisibleItemsToSpot(doc, spot) {
+  if (!spot) return;
+
+  for (var i = 0; i < doc.layers.length; i++) {
+    var layer = doc.layers[i];
+    if (!layer.visible) continue;
+
+    // Recursively recolor all items in this visible layer
+    recolorLayerItemsToSpot(layer, spot);
+  }
+}
+
+/**
+ * Recursively recolor items in a layer to spot color.
+ */
+function recolorLayerItemsToSpot(container, spot) {
+  if (!container) return;
+
+  // Recolor pageItems
+  if (container.pageItems) {
+    for (var i = 0; i < container.pageItems.length; i++) {
+      var item = container.pageItems[i];
+
+      if (item.typename === "GroupItem") {
+        // Recurse into groups
+        recolorLayerItemsToSpot(item, spot);
+      } else if (item.typename === "CompoundPathItem") {
+        // Recurse into compound paths
+        if (item.pathItems) {
+          for (var j = 0; j < item.pathItems.length; j++) {
+            recolorAtomicItemToSpot(item.pathItems[j], spot);
+          }
+        }
+      } else {
+        // Recolor atomic item (PathItem, TextFrame, RasterItem, etc.)
+        recolorAtomicItemToSpot(item, spot);
+      }
+    }
+  }
+
+  // Recurse into sublayers
+  if (container.layers) {
+    for (var k = 0; k < container.layers.length; k++) {
+      recolorLayerItemsToSpot(container.layers[k], spot);
+    }
+  }
+}
+
+/**
+ * Recolor one atomic item to spot color.
+ */
+function recolorAtomicItemToSpot(item, spot) {
+  try {
+    var spotColor = new SpotColor();
+    spotColor.spot = spot;
+    spotColor.tint = 100;
+
+    if (item.filled) {
+      item.fillColor = spotColor;
+    }
+    if (item.stroked) {
+      item.strokeColor = spotColor;
+    }
+  } catch (_) {}
 }
 
 /**
  * Export die SVG for one side at card size.
  */
-function exportSideDieSVG(doc, sideName, sideIndex, cardBounds, dieItems, outputDir) {
+function exportSideDieSVG(
+  doc,
+  sideName,
+  sideIndex,
+  cardBounds,
+  dieItems,
+  outputDir
+) {
   var filename = sideName + "_layer_" + sideIndex + "_diecut.svg";
   var outputPath = outputDir + "/" + filename;
-  
+
   log("Exporting card-sized die SVG: " + filename);
-  
+
   // Use existing die export function
   try {
     exportDieSVG(doc, dieItems, outputPath);
@@ -841,29 +1305,29 @@ function exportSideDieSVG(doc, sideName, sideIndex, cardBounds, dieItems, output
  */
 function saveToPDFX(doc, pdfPath) {
   var file = new File(pdfPath);
-  
+
   // PDF save options - using PDF 1.4 (Acrobat 5) for maximum compatibility
   var pdfOptions = new PDFSaveOptions();
-  
+
   // Use ACROBAT5 (PDF 1.4) which is universally supported and preserves spot colors
   pdfOptions.compatibility = PDFCompatibility.ACROBAT5;
-  
+
   // Preserve spot colors - do NOT convert to process
   pdfOptions.colorConversionID = ColorConversion.None;
   pdfOptions.colorDestinationID = ColorDestination.None;
-  
+
   // Don't preserve editability - we just need the plates
   pdfOptions.preserveEditability = false;
-  
+
   // Don't open PDF after saving
   pdfOptions.viewAfterSaving = false;
-  
+
   // Embed fonts
   pdfOptions.fontSubsetThreshold = 100;
-  
+
   // High quality
   pdfOptions.optimization = false;
-  
+
   try {
     doc.saveAs(file, pdfOptions);
     log("Saved PDF: " + pdfPath);
@@ -882,15 +1346,15 @@ function saveToPDFX(doc, pdfPath) {
  */
 function exportAlbedoPNGs(doc, outputDir, detectionResult) {
   var artboards = detectionResult.artboards;
-  
+
   for (var i = 0; i < artboards.length; i++) {
     var ab = artboards[i];
     var side = ab.side;
     var filename = side + "_layer_0_albedo.png";
     var outputPath = outputDir + "/" + filename;
-    
+
     log("Exporting albedo: " + filename);
-    
+
     exportArtboardToPNG(doc, ab.index, outputPath, 300);
   }
 }
@@ -906,19 +1370,19 @@ function exportAlbedoPNGs(doc, outputDir, detectionResult) {
 function exportDieSVGs(doc, outputDir, detectionResult) {
   for (var sideKey in detectionResult.sides) {
     if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
-    
+
     var buckets = detectionResult.sides[sideKey];
     var dieItems = buckets.DIE;
-    
+
     if (!dieItems || dieItems.length === 0) continue;
-    
+
     // Parse side name
     var sideName = sideKey.split("_")[0]; // "front" or "back"
     var filename = sideName + "_layer_0_diecut.svg";
     var outputPath = outputDir + "/" + filename;
-    
+
     log("Exporting die SVG: " + filename);
-    
+
     try {
       exportDieSVG(doc, dieItems, outputPath);
     } catch (e) {
@@ -934,7 +1398,7 @@ function exportDieSVG(doc, dieItems, outputPath) {
   // Create temporary layer for die export
   var tempLayer = ensureLayer(doc, "__DIE_EXPORT_TEMP__");
   tempLayer.visible = true;
-  
+
   // Duplicate die items to temp layer
   var duplicates = [];
   for (var i = 0; i < dieItems.length; i++) {
@@ -942,7 +1406,7 @@ function exportDieSVG(doc, dieItems, outputPath) {
     var dup = item.duplicate(tempLayer, ElementPlacement.PLACEATEND);
     duplicates.push(dup);
   }
-  
+
   // Outline strokes
   for (var j = 0; j < duplicates.length; j++) {
     try {
@@ -953,7 +1417,7 @@ function exportDieSVG(doc, dieItems, outputPath) {
       // Ignore
     }
   }
-  
+
   // Hide all other layers
   var originalVisibility = [];
   for (var k = 0; k < doc.layers.length; k++) {
@@ -962,23 +1426,23 @@ function exportDieSVG(doc, dieItems, outputPath) {
       doc.layers[k].visible = false;
     }
   }
-  
+
   // Export to SVG
   var file = new File(outputPath);
   var svgOptions = new ExportOptionsSVG();
   svgOptions.embedRasterImages = false;
   svgOptions.cssProperties = SVGCSSPropertyLocation.STYLEELEMENTS;
   svgOptions.fontSubsetting = SVGFontSubsetting.None;
-  
+
   doc.exportFile(file, ExportType.SVG, svgOptions);
-  
+
   // Cleanup: restore visibility and remove temp layer
   for (var m = 0; m < doc.layers.length; m++) {
     doc.layers[m].visible = originalVisibility[m];
   }
-  
+
   tempLayer.remove();
-  
+
   log("Exported die SVG: " + outputPath);
 }
 
@@ -989,21 +1453,26 @@ function exportDieSVG(doc, dieItems, outputPath) {
 /**
  * Write scratch JSON with detection results and metadata.
  */
-function writeScratchJSON(scratchPath, doc, detectionResult, cardBoundsPerSide) {
+function writeScratchJSON(
+  scratchPath,
+  doc,
+  detectionResult,
+  cardBoundsPerSide
+) {
   var data = {
     illustrator: {
       version: getIllustratorVersion(),
       pdf_preset: "PDF/X-4",
-      doc_color: "CMYK"
+      doc_color: "CMYK",
     },
     artboards: detectionResult.artboards,
     sides: buildSidesInfo(detectionResult, cardBoundsPerSide),
     warnings: detectionResult.warnings || [],
-    cardBounds: cardBoundsPerSide || {}
+    cardBounds: cardBoundsPerSide || {},
   };
-  
+
   writeJSON(scratchPath, data);
-  
+
   log("Wrote scratch JSON: " + scratchPath);
 }
 
@@ -1012,15 +1481,15 @@ function writeScratchJSON(scratchPath, doc, detectionResult, cardBoundsPerSide) 
  */
 function buildSidesInfo(detectionResult, cardBoundsPerSide) {
   var sides = [];
-  
+
   for (var sideKey in detectionResult.sides) {
     if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
-    
+
     var buckets = detectionResult.sides[sideKey];
     var sideName = sideKey.split("_")[0];
     var finishes = ["albedo"]; // Always present
     var hasDie = false;
-    
+
     if (buckets.UV && buckets.UV.length > 0) finishes.push("uv");
     if (buckets.FOIL && buckets.FOIL.length > 0) finishes.push("foil");
     if (buckets.EMBOSS && buckets.EMBOSS.length > 0) finishes.push("emboss");
@@ -1028,22 +1497,22 @@ function buildSidesInfo(detectionResult, cardBoundsPerSide) {
       finishes.push("diecut_mask");
       hasDie = true;
     }
-    
+
     var sideInfo = {
       side: sideName,
       index: 0,
       finishes: finishes,
-      die: hasDie
+      die: hasDie,
     };
-    
+
     // Add card bounds if available
     if (cardBoundsPerSide && cardBoundsPerSide[sideKey]) {
       sideInfo.cardBounds = cardBoundsPerSide[sideKey];
     }
-    
+
     sides.push(sideInfo);
   }
-  
+
   return sides;
 }
 
@@ -1061,7 +1530,7 @@ function openDocument(path) {
       log("ERROR: File does not exist: " + path);
       return null;
     }
-    
+
     return app.open(file);
   } catch (e) {
     log("ERROR: Cannot open document: " + e.message);
@@ -1077,19 +1546,19 @@ function duplicateDocument(doc) {
     // Save temp copy
     var tempPath = Folder.temp + "/parser_temp_" + new Date().getTime() + ".ai";
     var tempFile = new File(tempPath);
-    
+
     doc.saveAs(tempFile);
-    
+
     // Open temp copy
     var tempDoc = app.open(tempFile);
-    
+
     // Delete temp file from disk (doc is now in memory)
     try {
       tempFile.remove();
     } catch (e) {
       // Ignore
     }
-    
+
     return tempDoc;
   } catch (e) {
     log("ERROR: Cannot duplicate document: " + e.message);
@@ -1102,25 +1571,31 @@ function duplicateDocument(doc) {
  */
 function writeErrorAndExit(code, message) {
   log("FATAL ERROR [" + code + "]: " + message);
-  
+
   try {
     var errorData = {
       success: false,
       error: {
         code: code,
-        message: message
-      }
+        message: message,
+      },
     };
-    
+
     // Try to write to working directory if __JOB is available
     if (typeof __JOB !== "undefined" && __JOB && __JOB.output && __JOB.job_id) {
-      var errorPath = normalizePathForES(__JOB.output) + "/" + __JOB.job_id + "_error.json";
+      var errorPath =
+        normalizePathForES(__JOB.output) + "/" + __JOB.job_id + "_error.json";
       writeJSON(errorPath, errorData);
       log("Error JSON written to: " + errorPath);
-      
+
       // Also write to debug log
       try {
-        var debugLog = new File(normalizePathForES(__JOB.output) + "/" + __JOB.job_id + "_jsx_debug.log");
+        var debugLog = new File(
+          normalizePathForES(__JOB.output) +
+            "/" +
+            __JOB.job_id +
+            "_jsx_debug.log"
+        );
         debugLog.open("a");
         debugLog.writeln("ERROR: " + code);
         debugLog.writeln("Message: " + message);
@@ -1155,7 +1630,7 @@ function writeSentinel(path, content) {
 function logToDebugFile(outputDir, jobId, message) {
   try {
     var debugLog = new File(outputDir + "/" + jobId + "_jsx_debug.log");
-    debugLog.open("a");  // Append mode
+    debugLog.open("a"); // Append mode
     debugLog.writeln("[" + new Date().toTimeString() + "] " + message);
     debugLog.close();
   } catch (e) {
@@ -1170,15 +1645,15 @@ function logToDebugFile(outputDir, jobId, message) {
 function stringifySimple(obj) {
   if (obj === null) return "null";
   if (obj === undefined) return "undefined";
-  
+
   var type = typeof obj;
   if (type === "string") return obj;
   if (type === "number" || type === "boolean") return String(obj);
-  
+
   if (obj instanceof Array) {
     return "[Array:" + obj.length + "]";
   }
-  
+
   if (type === "object") {
     var keys = [];
     for (var k in obj) {
@@ -1188,7 +1663,6 @@ function stringifySimple(obj) {
     }
     return "{" + keys.join(",") + "}";
   }
-  
+
   return String(obj);
 }
-
