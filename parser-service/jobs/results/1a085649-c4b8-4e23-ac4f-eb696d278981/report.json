@@ -1,0 +1,49 @@
+{
+  "jobId": "1a085649-c4b8-4e23-ac4f-eb696d278981",
+  "illustrator": {
+    "version": "29.8.2",
+    "pdf_preset": "PDF/X-4",
+    "doc_color": "CMYK"
+  },
+  "artboards": [
+    {
+      "name": "Artboard 1",
+      "index": 0,
+      "bounds": [
+        0,
+        0,
+        612,
+        -792
+      ]
+    }
+  ],
+  "sides": [
+    {
+      "side": "front",
+      "index": 0,
+      "finishes": [
+        "albedo",
+        "uv",
+        "foil"
+      ],
+      "die": false
+    },
+    {
+      "side": "back",
+      "index": 0,
+      "finishes": [
+        "albedo"
+      ],
+      "die": false
+    }
+  ],
+  "plates_detected": [],
+  "outputs": {},
+  "diagnostics": [
+    {
+      "level": "info",
+      "code": "PLATE_DPI",
+      "detail": "600"
+    }
+  ]
+}

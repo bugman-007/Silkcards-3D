@@ -396,6 +396,11 @@ function processLayerRecursive(doc, layer, result) {
   if (!layer.visible || layer.locked) {
     return; // Skip hidden/locked layers
   }
+  
+  // WITH this:
+  if (layer.locked) {
+    return; // Only skip locked; allow hidden so we can detect back-side finishes
+  }
 
   // Detect finish from layer name
   var layerFinish = detectFinishFromName(layer.name);
@@ -1461,37 +1466,34 @@ function exportSideDieSVG(
  */
 function saveToPDFX(doc, pdfPath) {
   var file = new File(pdfPath);
-
-  // PDF save options - using PDF 1.4 (Acrobat 5) for maximum compatibility
   var pdfOptions = new PDFSaveOptions();
 
-  // Use ACROBAT5 (PDF 1.4) which is universally supported and preserves spot colors
+  // Keep spots
   pdfOptions.compatibility = PDFCompatibility.ACROBAT5;
-
-  // Preserve spot colors - do NOT convert to process
   pdfOptions.colorConversionID = ColorConversion.None;
   pdfOptions.colorDestinationID = ColorDestination.None;
-
-  // Don't preserve editability - we just need the plates
   pdfOptions.preserveEditability = false;
-
-  // Don't open PDF after saving
   pdfOptions.viewAfterSaving = false;
-
-  // Embed fonts
   pdfOptions.fontSubsetThreshold = 100;
-
-  // High quality
   pdfOptions.optimization = false;
+
+  // === ADD: export ONLY the active temp artboard ===
+  try {
+    var activeIdx = doc.artboards.getActiveArtboardIndex(); // 0-based
+    pdfOptions.saveMultipleArtboards = true;
+    pdfOptions.artboardRange = String(activeIdx + 1);       // 1-based range string
+  } catch (e) {
+    // Fallback: if we can't read the active index, still save; but cropping may be off.
+  }
+  // === END ADD ===
 
   try {
     doc.saveAs(file, pdfOptions);
-    log("Saved PDF: " + pdfPath);
   } catch (saveErr) {
-    log("ERROR saving PDF: " + saveErr.message);
     throw new Error("PDF save failed: " + saveErr.message);
   }
 }
+
 
 // ============================================================================
 // Phase 5: Export Albedo PNGs
