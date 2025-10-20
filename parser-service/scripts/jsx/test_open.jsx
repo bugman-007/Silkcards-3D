@@ -63,6 +63,9 @@
     
     $.writeln("[TEST] Success file written: " + successPath);
     
+    // Quit Illustrator
+    app.quit();
+    
   } catch (e) {
     $.writeln("[TEST] ERROR: " + e.message);
     $.writeln("[TEST] Stack: " + (e.stack || "no stack trace"));
@@ -77,6 +80,9 @@
     } catch (e2) {
       $.writeln("[TEST] Cannot write error file: " + e2.message);
     }
+    
+    // Quit Illustrator even on error
+    app.quit();
   }
 })();
 
