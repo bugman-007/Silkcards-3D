@@ -162,47 +162,69 @@ class PlateExtractor:
         
         return plates
     
+    def convert_plates_to_png(self, plate_files: List[Path], 
+                          output_dir: Path,
+                          plate_mapping: Dict[str, str] = None,
+                          expected_finish: str = None) -> Dict[str, Path]:
+        """
+        Convert Ghostscript plates (TIFF) → PNG and map to a finish.
+        When expected_finish is set (single-finish PDF), ignore CMYK plates.
+        """
+        if plate_mapping is None:
+            plate_mapping = config.PLATE_MAPPING
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        converted: Dict[str, Path] = {}
+
+        for plate_file in sorted(plate_files):
+            plate_name = plate_file.stem  # e.g. "(UV)" "(FOIL)" "(Cyan)" …
+
+            # Spot plates (UV/FOIL/EMBOSS/DIE) → map to finish key
+            finish = plate_mapping.get(plate_name)
+            if finish:
+                out_key = expected_finish if expected_finish else finish
+                png_path = self._tiff_to_png(plate_file, output_dir, out_key)
+                converted[out_key] = png_path
+                continue
+
+            # Process CMYK plates: only valid for albedo export
+            if plate_name in config.PROCESS_PLATES:
+                if expected_finish and expected_finish != "albedo":
+                    # Effect PDFs should not produce CMYK plates; ignore with a warning
+                    logger.warning(f"Unexpected process plate {plate_name} in {expected_finish} PDF")
+                    continue
+                # We don't build a CMYK composite here; tiffsep yields per-channel plates.
+                # If you want to composite, do it later. For now we skip creating a PNG for each CMYK plate.
+                continue
+
+            logger.warning(f"Unknown plate from Ghostscript: {plate_name}")
+
+        return converted
+    
     def extract_and_convert_plates(pdf_path: Path, output_dir: Path, 
-                                job_id: str,
-                                expected_finishes: Optional[Dict[str, bool]] = None,
-                                finish_type: str = None) -> Dict[str, Any]:
-        """
-        Convenience function to extract plates and convert to PNG.
-        
-        Args:
-            pdf_path: Path to input PDF (may be single-finish PDF)
-            output_dir: Output directory
-            job_id: Job identifier
-            expected_finishes: Optional dict of expected finishes for validation
-            finish_type: Optional: if PDF is for ONE finish, specify it here
-                        (e.g., "uv", "foil", "albedo")
-        
-        Returns:
-            Dict with extraction results
-        """
+                               job_id: str,
+                               expected_finishes: Optional[Dict[str, bool]] = None,
+                               finish_type: str = None) -> Dict[str, Any]:
         extractor = PlateExtractor()
-        
-        # Extract plates
         plate_files = extractor.extract_plates(pdf_path, output_dir)
-        
-        # Validate if expected finishes provided
+
         errors = []
         if expected_finishes:
             errors = extractor.validate_plates(plate_files, expected_finishes)
-            
-            # Convert to PNG (passing finish_type hint)
-        converted = extractor.convert_plates_to_png(plate_files, output_dir,
-                                                    expected_finish=finish_type)
-        
-        # Get plate names for report
+
+        # ⬇ pass the hint so we name/output correctly per single-finish PDF
+        converted = extractor.convert_plates_to_png(
+            plate_files, output_dir, expected_finish=finish_type
+        )
+
         plates_detected = [p.stem for p in plate_files]
-        
         return {
             "success": len(errors) == 0,
             "plates_detected": plates_detected,
             "converted": converted,
             "errors": errors
         }
+
     
     def _tiff_to_png(self, tiff_path: Path, output_dir: Path, 
                      finish_type: str) -> Path:
@@ -326,39 +348,29 @@ class PlateExtractor:
 
 
 def extract_and_convert_plates(pdf_path: Path, output_dir: Path, 
-                                job_id: str,
-                                expected_finishes: Optional[Dict[str, bool]] = None) -> Dict[str, Any]:
+                               job_id: str,
+                               expected_finishes: Optional[Dict[str, bool]] = None,
+                               finish_type: str = None) -> Dict[str, Any]:
     """
-    Convenience function to extract plates and convert to PNG.
-    
-    Args:
-        pdf_path: Path to input PDF
-        output_dir: Output directory
-        job_id: Job identifier
-        expected_finishes: Optional dict of expected finishes for validation
-        
-    Returns:
-        Dict with extraction results
-        
-    Raises:
-        GhostscriptError: If extraction fails
+    Convenience function to extract plates and convert to PNG (single PDF input).
+    finish_type: lowercased finish hint ("albedo","uv","foil","emboss","die"|"diecut_mask")
     """
     extractor = PlateExtractor()
-    
-    # Extract plates
+
+    # Extract plates with tiffsep
     plate_files = extractor.extract_plates(pdf_path, output_dir)
-    
-    # Validate if expected finishes provided
+
+    # Optional validation (usually skipped for single-finish PDFs)
     errors = []
     if expected_finishes:
         errors = extractor.validate_plates(plate_files, expected_finishes)
-    
-    # Convert to PNG
-    converted = extractor.convert_plates_to_png(plate_files, output_dir)
-    
-    # Get plate names for report
+
+    # Convert to PNGs; for single-finish PDFs, map any spot to that finish
+    converted = extractor.convert_plates_to_png(
+        plate_files, output_dir, expected_finish=finish_type
+    )
+
     plates_detected = [p.stem for p in plate_files]
-    
     return {
         "success": len(errors) == 0,
         "plates_detected": plates_detected,

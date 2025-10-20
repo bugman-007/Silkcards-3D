@@ -202,24 +202,51 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
       var cardBoundsPerSide = calculateCardBoundsForAllSides(doc, detectionResult);
       logToDebugFile(outputDir, jobId, "Card bounds calculated (twoPanel)");
       
-      log("Phase 4: Processing each side separately");
-      logToDebugFile(outputDir, jobId, "===== Phase 4: Per-Side Processing =====");
-      for (var sideKey in detectionResult.sides) {
-        if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
-        var sideName = sideKey.split("_")[0];
-        var sideIndex = 0;
-        logToDebugFile(outputDir, jobId, "--- Processing side: " + sideName + " ---");
-        var cardBounds = cardBoundsPerSide[sideKey];
-        if (!cardBounds) { logToDebugFile(outputDir, jobId, "No card bounds for " + sideKey + ", skipping"); continue; }
-        exportSideAlbedo(doc, sideName, sideIndex, cardBounds, outputDir);
-        var recoloredCount = recolorSideItemsToSpots(doc, sideKey, detectionResult, outputDir, jobId);
-        logToDebugFile(outputDir, jobId, "Recolored " + recoloredCount + " sub-items for " + sideName);
-        exportSidePDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId);
-        if (detectionResult.sides[sideKey].DIE && detectionResult.sides[sideKey].DIE.length > 0) {
-          exportSideDieSVG(doc, sideName, sideIndex, cardBounds, detectionResult.sides[sideKey].DIE, outputDir);
-        }
-        logToDebugFile(outputDir, jobId, "Completed processing for " + sideName);
-      }
+      // Phase 4: Processing each side & finish separately
+log("Phase 4: Processing each side & finish separately");
+logToDebugFile(outputDir, jobId, "===== Phase 4: Per-Finish Processing =====");
+
+for (var sideKey in detectionResult.sides) {
+  if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
+
+  var sideName = sideKey.split("_")[0]; // "front" | "back"
+  var sideIndex = 0;                    // keep 0 unless you truly have multiple card layers
+  var cardBounds = cardBoundsPerSide[sideKey];
+  if (!cardBounds) {
+    logToDebugFile(outputDir, jobId, "No card bounds for " + sideKey + ", skipping");
+    continue;
+  }
+
+  logToDebugFile(outputDir, jobId, "--- Side: " + sideName + " ---");
+
+  // 1) Albedo PDF (no recolor, CMYK composite)
+  logToDebugFile(outputDir, jobId, "  Exporting albedo PDF...");
+  exportFinishPDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId, "albedo", null, null);
+
+  // 2) Effect finishes
+  var finishes = ["UV", "FOIL", "EMBOSS", "DIE"];
+  for (var f = 0; f < finishes.length; f++) {
+    var finishType = finishes[f];
+    var buckets = detectionResult.sides[sideKey];    // { UV:[], FOIL:[], ... }
+    var items = buckets[finishType];
+
+    if (!items || items.length === 0) {
+      logToDebugFile(outputDir, jobId, "  ✗ No " + finishType + " items");
+      continue;
+    }
+
+    logToDebugFile(outputDir, jobId, "  ✓ " + finishType + " items: " + items.length);
+    exportFinishPDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId, finishType, sideKey, detectionResult);
+
+    // Optional: vector die reference
+    if (finishType === "DIE") {
+      exportFinishSVG(doc, sideName, sideIndex, cardBounds, items, outputDir);
+    }
+  }
+
+  logToDebugFile(outputDir, jobId, "Completed side: " + sideName);
+}
+
       logToDebugFile(outputDir, jobId, "All sides processed");
     }
     
@@ -600,26 +627,6 @@ function recolorItemsToSpots(doc, detectionResult) {
       "⚠️  Check: 1) Spot swatch creation, 2) Item types, 3) Locked/hidden items"
     );
   }
-}
-
-/**
- * Find swatch by name.
- */
-function findSwatch(doc, name) {
-  for (var i = 0; i < doc.swatches.length; i++) {
-    if (doc.swatches[i].name === name) {
-      return doc.swatches[i];
-    }
-  }
-
-  // Try spots
-  for (var j = 0; j < doc.spots.length; j++) {
-    if (doc.spots[j].name === name) {
-      return doc.spots[j];
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -1242,76 +1249,34 @@ function exportFinishPDF(
  */
 function exportFinishSVG(doc, sideName, sideIndex, cardBounds, dieItems, outputDir) {
   var filename = sideName + "_layer_" + sideIndex + "_diecut.svg";
-  var svgPath = outputDir + "/" + filename;
-  
-  log("Exporting die SVG: " + filename);
-  
-  // Create temporary layer for SVG export
-  var tempLayer = ensureLayer(doc, "__DIE_SVG_EXPORT_TEMP__");
+  var svgPath  = outputDir + "/" + filename;
+
+  var tempLayer = ensureLayer(doc, "__DIE_SVG_EXPORT__");
   tempLayer.visible = true;
-  
+  var visSnap = snapshotLayerVisibility(doc);
+
   try {
-    // Duplicate die items to temp layer
-    var duplicates = [];
-    for (var i = 0; i < dieItems.length; i++) {
-      try {
-        var dup = dieItems[i].duplicate(tempLayer, ElementPlacement.PLACEATEND);
-        duplicates.push(dup);
-      } catch (e) {
-        $.writeln("Could not duplicate die item: " + e.message);
-      }
-    }
-    
-    // Snapshot layer visibility
-    var layerVis = snapshotLayerVisibility(doc);
-    
+    // show only temp layer
+    for (var i = 0; i < doc.layers.length; i++) { try { doc.layers[i].visible = (doc.layers[i] === tempLayer); } catch (_) {} }
+    // duplicate die objects
+    for (var d = 0; d < dieItems.length; d++) { try { dieItems[d].duplicate(tempLayer, ElementPlacement.PLACEATEND); } catch (_) {} }
+
+    var ab = doc.artboards.add(cardBounds);
+    var abIndex = doc.artboards.length - 1;
     try {
-      // Hide all layers except temp layer
-      for (var j = 0; j < doc.layers.length; j++) {
-        try {
-          doc.layers[j].visible = (doc.layers[j] === tempLayer);
-        } catch (_) {}
-      }
-      app.redraw();
-      
-      // Create temp artboard
-      var tempAB = doc.artboards.add(cardBounds);
-      var tempABIndex = doc.artboards.length - 1;
-      
-      try {
-        doc.artboards.setActiveArtboardIndex(tempABIndex);
-        app.redraw();
-        
-        // Export to SVG
-        var file = new File(svgPath);
-        var svgOptions = new ExportOptionsSVG();
-        svgOptions.embedRasterImages = false;
-        svgOptions.cssProperties = SVGCSSPropertyLocation.STYLEELEMENTS;
-        svgOptions.fontSubsetting = SVGFontSubsetting.None;
-        svgOptions.coordinatePrecision = 2;
-        
-        doc.exportFile(file, ExportType.SVG, svgOptions);
-        
-        $.writeln("[SVG] Exported: " + filename);
-        
-      } finally {
-        // Remove temp artboard
-        doc.artboards.remove(tempABIndex);
-      }
-      
-    } finally {
-      // Restore layer visibility
-      restoreLayerVisibility(layerVis);
-      app.redraw();
-    }
-    
-  } catch (e) {
-    $.writeln("[ERROR] SVG export failed: " + e.message);
+      doc.artboards.setActiveArtboardIndex(abIndex);
+      var file = new File(svgPath);
+      var opt  = new ExportOptionsSVG();
+      opt.embedRasterImages = false;
+      opt.cssProperties = SVGCSSPropertyLocation.STYLEELEMENTS;
+      opt.fontSubsetting = SVGFontSubsetting.None;
+      opt.coordinatePrecision = 2;
+      doc.exportFile(file, ExportType.SVG, opt);
+    } finally { doc.artboards.remove(abIndex); }
+  } catch (_) {
   } finally {
-    // Clean up temp layer
-    try {
-      tempLayer.remove();
-    } catch (_) {}
+    restoreLayerVisibility(visSnap);
+    try { tempLayer.remove(); } catch (_) {}
   }
 }
 
@@ -1424,13 +1389,9 @@ function isolateFinishContent(
  * Only affects currently visible layers.
  */
 function recolorVisibleItemsToSpot(doc, spot) {
-  if (!spot) return;
-
   for (var i = 0; i < doc.layers.length; i++) {
     var layer = doc.layers[i];
     if (!layer.visible) continue;
-
-    // Recursively recolor all items in this visible layer
     recolorLayerItemsToSpot(layer, spot);
   }
 }
@@ -1441,34 +1402,19 @@ function recolorVisibleItemsToSpot(doc, spot) {
 function recolorLayerItemsToSpot(container, spot) {
   if (!container) return;
 
-  // Recolor pageItems
   if (container.pageItems) {
     for (var i = 0; i < container.pageItems.length; i++) {
-      var item = container.pageItems[i];
-
-      if (item.typename === "GroupItem") {
-        // Recurse into groups
-        recolorLayerItemsToSpot(item, spot);
-      } else if (item.typename === "CompoundPathItem") {
-        // Recurse into compound paths
-        if (item.pathItems) {
-          for (var j = 0; j < item.pathItems.length; j++) {
-            recolorAtomicItemToSpot(item.pathItems[j], spot);
-          }
-        }
+      var it = container.pageItems[i];
+      if (it.typename === "GroupItem") {
+        recolorLayerItemsToSpot(it, spot);
+      } else if (it.typename === "CompoundPathItem" && it.pathItems) {
+        for (var j = 0; j < it.pathItems.length; j++) recolorAtomicItemToSpot(it.pathItems[j], spot);
       } else {
-        // Recolor atomic item (PathItem, TextFrame, RasterItem, etc.)
-        recolorAtomicItemToSpot(item, spot);
+        recolorAtomicItemToSpot(it, spot);
       }
     }
   }
-
-  // Recurse into sublayers
-  if (container.layers) {
-    for (var k = 0; k < container.layers.length; k++) {
-      recolorLayerItemsToSpot(container.layers[k], spot);
-    }
-  }
+  if (container.layers) { for (var k = 0; k < container.layers.length; k++) recolorLayerItemsToSpot(container.layers[k], spot); }
 }
 
 /**
@@ -1476,16 +1422,9 @@ function recolorLayerItemsToSpot(container, spot) {
  */
 function recolorAtomicItemToSpot(item, spot) {
   try {
-    var spotColor = new SpotColor();
-    spotColor.spot = spot;
-    spotColor.tint = 100;
-
-    if (item.filled) {
-      item.fillColor = spotColor;
-    }
-    if (item.stroked) {
-      item.strokeColor = spotColor;
-    }
+    var sc = new SpotColor(); sc.spot = spot; sc.tint = 100;
+    if (item.filled)  item.fillColor  = sc;
+    if (item.stroked) item.strokeColor = sc;
   } catch (_) {}
 }
 

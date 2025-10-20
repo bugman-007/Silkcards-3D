@@ -19,6 +19,37 @@ var TOKENS = {
  * @param {String} name - Layer or artboard name
  * @return {String|null} - Finish type (FOIL, UV, EMBOSS, DIE) or null
  */
+
+function snapshotLayerVisibility(doc) {
+  var snap = [];
+  for (var i = 0; i < doc.layers.length; i++) {
+    snap.push({ layer: doc.layers[i], visible: !!doc.layers[i].visible });
+  }
+  return snap;
+}
+
+/**
+ * Restore a snapshot created by snapshotLayerVisibility.
+ */
+function restoreLayerVisibility(snapshot) {
+  if (!snapshot) return;
+  for (var i = 0; i < snapshot.length; i++) {
+    try { snapshot[i].layer.visible = snapshot[i].visible; } catch (_) {}
+  }
+}
+
+function findSwatch(doc, name) {
+  if (!doc || !name) return null;
+
+  // 1) Look in Spots first (correct object for SpotColor.spot)
+  for (var i = 0; i < doc.spots.length; i++) {
+    if (doc.spots[i].name === name) return doc.spots[i];
+  }
+
+  // 2) If not found, create a Spot
+  return ensureSwatch(doc, name, "spot"); // returns a Spot
+}
+
 function detectFinishFromName(name) {
   if (!name) return null;
   
@@ -123,43 +154,14 @@ function ensureSwatch(doc, name, type) {
     }
   }
   
-  // Create new spot swatch with CMYK color
+  // Create new spot swatch
   var newSwatch = doc.spots.add();
   newSwatch.name = name;
   
-  // Set CMYK color for the spot (100% Cyan for visibility in plates)
-  // Each spot needs a different color for Ghostscript to separate properly
-  var cmykColor = new CMYKColor();
-  if (name === "UV") {
-    cmykColor.cyan = 100;
-    cmykColor.magenta = 0;
-    cmykColor.yellow = 0;
-    cmykColor.black = 0;
-  } else if (name === "FOIL") {
-    cmykColor.cyan = 0;
-    cmykColor.magenta = 100;
-    cmykColor.yellow = 0;
-    cmykColor.black = 0;
-  } else if (name === "EMBOSS") {
-    cmykColor.cyan = 0;
-    cmykColor.magenta = 0;
-    cmykColor.yellow = 100;
-    cmykColor.black = 0;
-  } else if (name === "DIE") {
-    cmykColor.cyan = 0;
-    cmykColor.magenta = 0;
-    cmykColor.yellow = 0;
-    cmykColor.black = 100;
-  } else {
-    // Default: 100% K
-    cmykColor.cyan = 0;
-    cmykColor.magenta = 0;
-    cmykColor.yellow = 0;
-    cmykColor.black = 100;
-  }
-  
-  newSwatch.color = cmykColor;
-  newSwatch.colorType = ColorModel.SPOT;
+  // Set color (100% K for spot separations)
+  var spotColor = new SpotColor();
+  spotColor.spot = newSwatch;
+  spotColor.tint = 100;
   
   return newSwatch;
 }
