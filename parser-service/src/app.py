@@ -131,10 +131,8 @@ class ParserJob:
             else:
                 logger.warning(f"[{self.job_id}] No scratch data from JSX")
             
-            # Verify PDF was created
-            pdf_path = self.working_dir / f"{self.job_id}.pdf"
-            if not pdf_path.exists():
-                raise RuntimeError("PDF/X file was not created")
+            # Per-side PDFs are validated in _run_ghostscript_phase
+            # No need to check for single PDF anymore
             
             logger.info(f"[{self.job_id}] Illustrator phase completed")
         

@@ -179,119 +179,50 @@ app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
 
     // Phase 2: Create spot swatches
     log("Phase 2: Creating spot swatches");
-    logToDebugFile(
-      outputDir,
-      jobId,
-      "===== Phase 2: Creating spot swatches ====="
-    );
-    createSpotSwatches(doc, detectionResult.finishesUsed);
+    logToDebugFile(outputDir, jobId, "===== Phase 2: Creating spot swatches =====");
+    createSpotSwatches(doc, detectionResult.finishesUsed, outputDir, jobId);
     logToDebugFile(outputDir, jobId, "Spot swatches created");
-
-    // Phase 3: Calculate card bounds for each side
-    log("Phase 3: Calculating card bounds per side");
-    logToDebugFile(
-      outputDir,
-      jobId,
-      "===== Phase 3: Calculating card bounds ====="
-    );
-    var cardBoundsPerSide = calculateCardBoundsForAllSides(
-      doc,
-      detectionResult
-    );
-    logToDebugFile(
-      outputDir,
-      jobId,
-      "Card bounds calculated: " + stringifySimple(cardBoundsPerSide)
-    );
-
-    // Phase 4: Process each side separately (PER-SIDE EXPORT!)
-    log("Phase 4: Processing each side separately");
-    logToDebugFile(
-      outputDir,
-      jobId,
-      "===== Phase 4: Per-Side Processing ====="
-    );
-    for (var sideKey in detectionResult.sides) {
-      if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
-      var sideName = sideKey.split("_")[0];
-      var sideIndex = 0;
-      logToDebugFile(
-        outputDir,
-        jobId,
-        "--- Processing side: " + sideName + " ---"
-      );
-      var cardBounds = cardBoundsPerSide[sideKey];
-      if (!cardBounds) {
-        logToDebugFile(
-          outputDir,
-          jobId,
-          "No card bounds for " + sideKey + ", skipping"
-        );
-        continue;
+    logToDebugFile(outputDir, jobId, "Total spots in document: " + doc.spots.length);
+    logToDebugFile(outputDir, jobId, "Total swatches in document: " + doc.swatches.length);
+    
+    // Phase 3: Detect rectangles & decide export mode
+    log("Phase 3: Detecting card rectangles");
+    logToDebugFile(outputDir, jobId, "===== Phase 3: Detect Card Rectangles =====");
+    var frames = detectCardFrames(doc);
+    logToDebugFile(outputDir, jobId, "Card frames detected: " + (frames ? frames.length : 0));
+    var classifiedRects = classifyFramesIfMultiPanel(doc, frames, detectionResult);
+    var isMultiPanel = classifiedRects && classifiedRects.length >= 4; // heuristic
+    
+    if (isMultiPanel) {
+      logToDebugFile(outputDir, jobId, "Layout: multiPanel");
+      exportMultiPanel(doc, classifiedRects, detectionResult, outputDir, jobId);
+    } else {
+      log("Phase 3b: Calculating per-side bounds (twoPanel)");
+      logToDebugFile(outputDir, jobId, "===== Phase 3b: Per-Side Bounds (twoPanel) =====");
+      var cardBoundsPerSide = calculateCardBoundsForAllSides(doc, detectionResult);
+      logToDebugFile(outputDir, jobId, "Card bounds calculated (twoPanel)");
+      
+      log("Phase 4: Processing each side separately");
+      logToDebugFile(outputDir, jobId, "===== Phase 4: Per-Side Processing =====");
+      for (var sideKey in detectionResult.sides) {
+        if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
+        var sideName = sideKey.split("_")[0];
+        var sideIndex = 0;
+        logToDebugFile(outputDir, jobId, "--- Processing side: " + sideName + " ---");
+        var cardBounds = cardBoundsPerSide[sideKey];
+        if (!cardBounds) { logToDebugFile(outputDir, jobId, "No card bounds for " + sideKey + ", skipping"); continue; }
+        exportSideAlbedo(doc, sideName, sideIndex, cardBounds, outputDir);
+        var recoloredCount = recolorSideItemsToSpots(doc, sideKey, detectionResult, outputDir, jobId);
+        logToDebugFile(outputDir, jobId, "Recolored " + recoloredCount + " sub-items for " + sideName);
+        exportSidePDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId);
+        if (detectionResult.sides[sideKey].DIE && detectionResult.sides[sideKey].DIE.length > 0) {
+          exportSideDieSVG(doc, sideName, sideIndex, cardBounds, detectionResult.sides[sideKey].DIE, outputDir);
+        }
+        logToDebugFile(outputDir, jobId, "Completed processing for " + sideName);
       }
-
-      // Step 1: Export CMYK albedo PDF (NO recoloring, just CMYK composite)
-      logToDebugFile(
-        outputDir,
-        jobId,
-        "  Exporting albedo (CMYK composite) PDF..."
-      );
-      exportFinishPDF(
-        doc,
-        sideName,
-        sideIndex,
-        cardBounds,
-        outputDir,
-        jobId,
-        "albedo",
-        null
-      );
-
-      // Step 2: Export separate PDF for EACH finish with spot recoloring
-      // Step 2: Export separate PDF for EACH finish with spot recoloring
-var finishes = ["UV", "FOIL", "EMBOSS", "DIE"];
-for (var f = 0; f < finishes.length; f++) {
-  var finishType = finishes[f];
-  var buckets = detectionResult.sides[sideKey];
-  var finishItems = buckets[finishType];
-  
-  if (!finishItems || finishItems.length === 0) {
-    logToDebugFile(outputDir, jobId, "  No " + finishType + " items, skipping export");
-    continue;
-  }
-  
-  logToDebugFile(outputDir, jobId, "  Exporting " + finishType + " PDF with spot color...");
-  exportFinishPDF(doc, sideName, sideIndex, cardBounds, outputDir, jobId, finishType, sideKey, detectionResult);
-  
-  // For DIE, also export SVG vector reference
-  if (finishType === "DIE" && finishItems.length > 0) {
-    logToDebugFile(outputDir, jobId, "  ✓ Found " + finishItems.length + " " + finishType + " items");
-    logToDebugFile(outputDir, jobId, "  Exporting DIE SVG vector reference...");
-    exportFinishSVG(doc, sideName, sideIndex, cardBounds, finishItems, outputDir);
-  }
-}
-
-      // Step 3: Export die SVG (vector reference)
-      if (
-        detectionResult.sides[sideKey].DIE &&
-        detectionResult.sides[sideKey].DIE.length > 0
-      ) {
-        logToDebugFile(outputDir, jobId, "  Exporting die SVG...");
-        exportSideDieSVG(
-          doc,
-          sideName,
-          sideIndex,
-          cardBounds,
-          detectionResult.sides[sideKey].DIE,
-          outputDir
-        );
-      }
-
-      logToDebugFile(outputDir, jobId, "Completed processing for " + sideName);
+      logToDebugFile(outputDir, jobId, "All sides processed");
     }
-
-    logToDebugFile(outputDir, jobId, "All sides processed");
-
+    
     // Phase 5: Write scratch JSON
     log("Phase 5: Writing scratch JSON");
     logToDebugFile(
@@ -568,16 +499,33 @@ function getItemsOnArtboard(doc, artboardIndex) {
 /**
  * Create spot color swatches for detected finishes.
  */
-function createSpotSwatches(doc, finishesUsed) {
+function createSpotSwatches(doc, finishesUsed, outputDir, jobId) {
   var finishNames = ["UV", "FOIL", "EMBOSS", "DIE"];
 
   for (var i = 0; i < finishNames.length; i++) {
     var finishName = finishNames[i];
 
     if (finishesUsed[finishName]) {
-      log("Creating spot swatch: " + finishName);
-      ensureSwatch(doc, finishName, "spot");
+      logToDebugFile(outputDir, jobId, "  Creating spot swatch: " + finishName);
+      var swatch = ensureSwatch(doc, finishName, "spot");
+      if (swatch) {
+        logToDebugFile(outputDir, jobId, "    Created: " + swatch.name + " (color: " + getColorInfo(swatch) + ")");
+      } else {
+        logToDebugFile(outputDir, jobId, "    ERROR: Failed to create spot for " + finishName);
+      }
     }
+  }
+}
+
+function getColorInfo(swatch) {
+  try {
+    if (swatch.color && swatch.color.typename === "CMYKColor") {
+      var c = swatch.color;
+      return "C" + Math.round(c.cyan) + " M" + Math.round(c.magenta) + " Y" + Math.round(c.yellow) + " K" + Math.round(c.black);
+    }
+    return swatch.color ? swatch.color.typename : "no color";
+  } catch (e) {
+    return "error getting color";
   }
 }
 
@@ -788,9 +736,26 @@ function recolorTextFrame(textFrame, spot) {
  */
 function calculateCardBoundsForAllSides(doc, detectionResult) {
   var boundsPerSide = {};
-
+  
+  // 0) Try rectangle/frame detection first (DIE or trim frames)
+  try {
+    var frames = detectCardFrames(doc);
+    if (frames && frames.length >= 1) {
+      var chosen = chooseSideRectanglesFromFrames(frames, detectionResult);
+      if (chosen && (chosen.front || chosen.back)) {
+        if (chosen.front) boundsPerSide.front_layer_0 = chosen.front.bounds;
+        if (chosen.back) boundsPerSide.back_layer_0 = chosen.back.bounds;
+      }
+    }
+  } catch (e) {
+    // Non-fatal: fall back to content-based detection
+  }
+  
   for (var sideKey in detectionResult.sides) {
     if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
+    
+    // If we already filled from frame detection, skip fallback for that side
+    if (boundsPerSide[sideKey]) continue;
 
     var buckets = detectionResult.sides[sideKey];
     var allItems = [];
@@ -824,6 +789,109 @@ function calculateCardBoundsForAllSides(doc, detectionResult) {
 }
 
 /**
+ * Detect card frames (DIE or trim rectangles) in the document.
+ * Returns an array of { bounds:[l,t,r,b], isDie:true/false, layerName:string }.
+ */
+function detectCardFrames(doc) {
+  var frames = [];
+  // Scan all pathItems
+  var paths = doc.pathItems;
+  for (var i = 0; i < paths.length; i++) {
+    var p = paths[i];
+    try {
+      if (!p.closed) continue;
+      // Stroke-only rectangle-like path
+      if (!p.stroked) continue;
+      if (p.filled) continue;
+      // Quick size sanity
+      var b = p.geometricBounds; // [l,t,r,b]
+      var w = Math.abs(b[2] - b[0]);
+      var h = Math.abs(b[1] - b[3]);
+      if (w < 50 || h < 50) continue; // too small to be a card
+      var aspect = w / h;
+      if (aspect < 1.40 || aspect > 2.10) continue; // business card-ish
+      // 4 corners check: Illustrator may approximate; allow 4 points or more
+      if (p.pathPoints.length < 4) continue;
+      // Prefer DIE spot or layer hints
+      var isDie = false;
+      try {
+        var sc = p.strokeColor;
+        if (sc && sc.typename === 'SpotColor' && sc.spot && sc.spot.name) {
+          var n = String(sc.spot.name).toLowerCase();
+          if (n.indexOf('die') !== -1 || n.indexOf('cut') !== -1) isDie = true;
+        }
+      } catch (e2) {}
+      var layerName = '';
+      try { layerName = p.layer ? String(p.layer.name) : ''; } catch (e3) {}
+      if (!isDie && layerName) {
+        var ln = layerName.toLowerCase();
+        if (ln.indexOf('die') !== -1 || ln.indexOf('cut') !== -1) isDie = true;
+      }
+      frames.push({ bounds: [b[0], b[1], b[2], b[3]], isDie: isDie, layerName: layerName });
+    } catch (e1) {
+      // ignore malformed
+    }
+  }
+  return frames;
+}
+
+/**
+ * From detected frames choose one for front and one for back using overlap with PRINT buckets.
+ */
+function chooseSideRectanglesFromFrames(frames, detectionResult) {
+  // Prefer DIE frames
+  var dieFrames = [];
+  for (var i = 0; i < frames.length; i++) if (frames[i].isDie) dieFrames.push(frames[i]);
+  var candidate = (dieFrames.length >= 1) ? dieFrames : frames;
+  
+  function scoreFrameForSide(frame, sideKey) {
+    var buckets = detectionResult.sides[sideKey];
+    var items = buckets && buckets.PRINT ? buckets.PRINT : [];
+    var s = 0;
+    for (var i = 0; i < items.length; i++) {
+      try { s += rectOverlapArea(frame.bounds, items[i].geometricBounds); } catch (e) {}
+    }
+    return s;
+  }
+  
+  var bestFront = null, bestFrontScore = -1;
+  var bestBack = null, bestBackScore = -1;
+  for (var i = 0; i < candidate.length; i++) {
+    var f = candidate[i];
+    var fs = scoreFrameForSide(f, 'front_layer_0');
+    if (fs > bestFrontScore) { bestFrontScore = fs; bestFront = f; }
+    var bs = scoreFrameForSide(f, 'back_layer_0');
+    if (bs > bestBackScore) { bestBackScore = bs; bestBack = f; }
+  }
+  // If both chose the same and we have at least two, split by x (left→front, right→back)
+  if (bestFront && bestBack && bestFront === bestBack && candidate.length >= 2) {
+    var left = candidate[0];
+    for (var j = 1; j < candidate.length; j++) {
+      if (candidate[j].bounds[0] < left.bounds[0]) left = candidate[j];
+    }
+    var right = left;
+    var maxX = -999999;
+    for (var k = 0; k < candidate.length; k++) {
+      if (candidate[k].bounds[2] > maxX) { maxX = candidate[k].bounds[2]; right = candidate[k]; }
+    }
+    bestFront = left; bestBack = right;
+  }
+  return { front: bestFront, back: bestBack };
+}
+
+/** Rectangle intersection area helper */
+function rectOverlapArea(a, b) {
+  var l = Math.max(a[0], b[0]);
+  var t = Math.min(a[1], b[1]);
+  var r = Math.min(a[2], b[2]);
+  var bt = Math.max(a[3], b[3]);
+  var w = r - l;
+  var h = t - bt;
+  if (w <= 0 || h <= 0) return 0;
+  return w * h;
+}
+
+/**
  * Calculate union bounding box of multiple items.
  * Returns [left, top, right, bottom] in points.
  */
@@ -850,6 +918,121 @@ function getItemsBounds(items) {
   return [left, top, right, bottom];
 }
 
+// ============================================================================
+// Multi-Panel (Case B) helpers
+// ============================================================================
+
+/**
+ * Classify frames into (side,effect) rectangles using overlap votes.
+ * Returns array of {bounds, sideKey, effect}
+ */
+function classifyFramesIfMultiPanel(doc, frames, detectionResult) {
+  if (!frames || frames.length === 0) return [];
+  // Heuristic: if many similar sized frames exist, treat as multi-panel
+  if (frames.length < 3) return [];
+  
+  var rects = [];
+  for (var i = 0; i < frames.length; i++) {
+    var f = frames[i];
+    var best = { sideKey: null, effect: null, score: -1 };
+    for (var sideKey in detectionResult.sides) {
+      if (!detectionResult.sides.hasOwnProperty(sideKey)) continue;
+      var buckets = detectionResult.sides[sideKey];
+      var effects = ["PRINT","UV","FOIL","EMBOSS","DIE"];
+      for (var e = 0; e < effects.length; e++) {
+        var eff = effects[e];
+        var items = buckets[eff] || [];
+        var s = 0;
+        for (var j = 0; j < items.length; j++) {
+          try { s += rectOverlapArea(f.bounds, items[j].geometricBounds); } catch (e1) {}
+        }
+        if (s > best.score) best = { sideKey: sideKey, effect: eff, score: s };
+      }
+    }
+    if (best.sideKey) rects.push({ bounds: f.bounds, sideKey: best.sideKey, effect: best.effect });
+  }
+  return rects;
+}
+
+/**
+ * Export for multi-panel: one export per rectangle/effect.
+ */
+function exportMultiPanel(doc, rects, detectionResult, outputDir, jobId) {
+  var perEffectPDF = true; // default on for verification across both cases
+  for (var i = 0; i < rects.length; i++) {
+    var r = rects[i];
+    var sideName = r.sideKey.indexOf('front') === 0 ? 'front' : 'back';
+    var sideIndex = 0;
+    if (r.effect === 'PRINT') {
+      exportSideAlbedo(doc, sideName, sideIndex, r.bounds, outputDir);
+    } else {
+      // Duplicate only overlapping items to a temp layer and recolor
+      recolorAndExportEffectRect(doc, detectionResult, r, outputDir, jobId, perEffectPDF);
+    }
+  }
+}
+
+/**
+ * Recolor duplicates within a rectangle and export a PDF for that effect.
+ */
+function recolorAndExportEffectRect(doc, detectionResult, rectInfo, outputDir, jobId, perEffectPDF) {
+  var sideName = rectInfo.sideKey.indexOf('front')===0 ? 'front':'back';
+  var sideIndex = 0;
+  var effect = rectInfo.effect; // UV/FOIL/EMBOSS/DIE
+  
+  var tempLayer = doc.layers.add();
+  tempLayer.name = "__temp_" + sideName + "_" + effect;
+  
+  try {
+    // Collect items overlapping this rectangle from the side/effect bucket
+    var buckets = detectionResult && detectionResult.sides ? detectionResult.sides[rectInfo.sideKey] : null;
+    var items = buckets ? (buckets[effect]||[]) : [];
+    var dupCount = 0;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      try {
+        if (rectOverlapArea(rectInfo.bounds, it.geometricBounds) > 0) {
+          it.duplicate(tempLayer, ElementPlacement.PLACEATEND);
+          dupCount++;
+        }
+      } catch (e) {}
+    }
+    
+    // Recolor duplicates to the spot swatch
+    var sw = findSwatch(doc, effect);
+    if (sw) {
+      for (var k = 0; k < tempLayer.pageItems.length; k++) {
+        recolorItemToSpotRecursive(tempLayer.pageItems[k], sw);
+      }
+    }
+    
+    // Export PDF clipped to rect
+    if (perEffectPDF) {
+      var filename = jobId + "_" + sideName + "_layer_" + sideIndex + "_" + effect.toLowerCase() + ".pdf";
+      var pdfPath = outputDir + "/" + filename;
+      var ab = doc.artboards.add(rectInfo.bounds);
+      var idx = doc.artboards.length - 1;
+      try {
+        doc.artboards.setActiveArtboardIndex(idx);
+        saveToPDFX(doc, pdfPath);
+      } finally {
+        doc.artboards.remove(idx);
+      }
+    }
+  } finally {
+    try { tempLayer.remove(); } catch (e2) {}
+  }
+}
+
+/** Create bounds map from chosen rects for twoPanel */
+function calculateCardBoundsFromRects(classified) {
+  var out = {};
+  for (var i = 0; i < classified.length; i++) {
+    var c = classified[i];
+    if (c.effect === 'PRINT') out[c.sideKey] = c.bounds;
+  }
+  return out;
+}
 // ============================================================================
 // Per-Side Export Functions (NEW)
 // ============================================================================
@@ -882,31 +1065,65 @@ function exportSideAlbedo(doc, sideName, sideIndex, cardBounds, outputDir) {
 /**
  * Recolor items for ONE side only.
  */
-function recolorSideItemsToSpots(doc, sideKey, detectionResult) {
+function recolorSideItemsToSpots(doc, sideKey, detectionResult, outputDir, jobId) {
   var buckets = detectionResult.sides[sideKey];
   var finishTypes = ["UV", "FOIL", "EMBOSS", "DIE"];
   var totalRecolored = 0;
-
+  
+  logToDebugFile(outputDir, jobId, "  Starting recoloring for " + sideKey);
+  
+  // Log buckets structure (ES3-compatible, no JSON.stringify)
+  var bucketKeys = [];
+  if (buckets) {
+    for (var key in buckets) {
+      if (buckets.hasOwnProperty(key)) {
+        bucketKeys.push(key);
+      }
+    }
+  }
+  logToDebugFile(outputDir, jobId, "  Buckets: [" + bucketKeys.join(", ") + "]");
+  
   for (var i = 0; i < finishTypes.length; i++) {
     var finishType = finishTypes[i];
     var items = buckets[finishType];
-
+    
+    logToDebugFile(outputDir, jobId, "  Checking " + finishType + ": " + (items ? items.length : 0) + " items");
+    
     if (!items || items.length === 0) continue;
 
     var swatch = findSwatch(doc, finishType);
     if (!swatch) {
-      log("  WARNING: Swatch not found for " + finishType);
+      logToDebugFile(outputDir, jobId, "  ERROR: Swatch not found for " + finishType + "!");
+      logToDebugFile(outputDir, jobId, "  Available swatches: " + getSwatchNames(doc));
       continue;
     }
-
+    
+    logToDebugFile(outputDir, jobId, "  Found swatch: " + swatch.name);
+    
     // Recolor each item recursively
+    var itemsRecolored = 0;
     for (var j = 0; j < items.length; j++) {
-      totalRecolored += recolorItemToSpotRecursive(items[j], swatch);
+      var count = recolorItemToSpotRecursive(items[j], swatch);
+      itemsRecolored += count;
+      totalRecolored += count;
     }
+    
+    logToDebugFile(outputDir, jobId, "  Recolored " + itemsRecolored + " sub-items for " + finishType);
   }
-
-  log("  Recolored " + totalRecolored + " sub-items for " + sideKey);
+  
+  logToDebugFile(outputDir, jobId, "  Total recolored: " + totalRecolored + " sub-items");
   return totalRecolored;
+}
+
+function getSwatchNames(doc) {
+  var names = [];
+  for (var i = 0; i < doc.swatches.length; i++) {
+    names.push(doc.swatches[i].name);
+  }
+  for (var j = 0; j < doc.spots.length; j++) {
+    names.push(doc.spots[j].name + "(spot)");
+  }
+  return names.join(", ");
 }
 
 /**

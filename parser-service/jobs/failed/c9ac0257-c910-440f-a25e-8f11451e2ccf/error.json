@@ -1,0 +1,9 @@
+{
+  "jobId": "c9ac0257-c910-440f-a25e-8f11451e2ccf",
+  "success": false,
+  "error": {
+    "code": "JOB_FAILED",
+    "message": "JSX did not write completion sentinel",
+    "timestamp": "2025-10-20T11:40:50.215550Z"
+  }
+}

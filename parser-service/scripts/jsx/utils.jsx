@@ -123,14 +123,43 @@ function ensureSwatch(doc, name, type) {
     }
   }
   
-  // Create new spot swatch
+  // Create new spot swatch with CMYK color
   var newSwatch = doc.spots.add();
   newSwatch.name = name;
   
-  // Set color (100% K for spot separations)
-  var spotColor = new SpotColor();
-  spotColor.spot = newSwatch;
-  spotColor.tint = 100;
+  // Set CMYK color for the spot (100% Cyan for visibility in plates)
+  // Each spot needs a different color for Ghostscript to separate properly
+  var cmykColor = new CMYKColor();
+  if (name === "UV") {
+    cmykColor.cyan = 100;
+    cmykColor.magenta = 0;
+    cmykColor.yellow = 0;
+    cmykColor.black = 0;
+  } else if (name === "FOIL") {
+    cmykColor.cyan = 0;
+    cmykColor.magenta = 100;
+    cmykColor.yellow = 0;
+    cmykColor.black = 0;
+  } else if (name === "EMBOSS") {
+    cmykColor.cyan = 0;
+    cmykColor.magenta = 0;
+    cmykColor.yellow = 100;
+    cmykColor.black = 0;
+  } else if (name === "DIE") {
+    cmykColor.cyan = 0;
+    cmykColor.magenta = 0;
+    cmykColor.yellow = 0;
+    cmykColor.black = 100;
+  } else {
+    // Default: 100% K
+    cmykColor.cyan = 0;
+    cmykColor.magenta = 0;
+    cmykColor.yellow = 0;
+    cmykColor.black = 100;
+  }
+  
+  newSwatch.color = cmykColor;
+  newSwatch.colorType = ColorModel.SPOT;
   
   return newSwatch;
 }
